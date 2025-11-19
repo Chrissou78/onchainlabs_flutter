@@ -1,0 +1,33 @@
+name: onchainlabs_flutter
+description: >
+  Polygon EVM wallet helper for Flutter.
+  Creates a wallet with mnemonic phrase and private key, registers it with
+  https://ga-api.onchainlabs.ch, and stores the mnemonic locally.
+
+version: 0.0.1
+homepage: https://github.com/your-org/onchainlabs_flutter
+repository: https://github.com/your-org/onchainlabs_flutter
+issue_tracker: https://github.com/your-org/onchainlabs_flutter/issues
+license: MIT
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.10.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  flutter_secure_storage: ^9.2.2
+  web3dart: ^3.0.1
+  bip39_plus: ^1.1.1
+  bip32_plus: ^1.0.0
+  hex: ^0.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^5.0.0
+
+flutter:
+  uses-material-design: false
