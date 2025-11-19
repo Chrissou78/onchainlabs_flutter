@@ -1,4 +1,4 @@
-## 0.0.1
+## 1.0.0
 
 - Initial release of `onchainlabs_flutter`.
 - Generate Polygon EVM wallet (address, private key, mnemonic).
