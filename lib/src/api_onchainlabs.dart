@@ -8,8 +8,7 @@ class OnchainLabsApi implements PolygonWalletApi {
 
   final http.Client _client;
 
-  OnchainLabsApi({http.Client? client})
-      : _client = client ?? http.Client();
+  OnchainLabsApi({http.Client? client}) : _client = client ?? http.Client();
 
   @override
   Future<String> getRandomMessage(String address) async {
