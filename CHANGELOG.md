@@ -7,7 +7,6 @@
 
 ## 2.0.0
 
-- Add Mint function
-- Add Minter admin wallet within the test app
-- Add Transfer function
-- Add Approve function
+- Add Mint function thru API
+- Add Balance function thru API
+- Add Test public key
