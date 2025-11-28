@@ -36,7 +36,7 @@ In your app `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  Onchainlabs_flutter: ^2.0.0
+  Onchainlabs_flutter: ^2.0.1
 
 Code Examples : 
 

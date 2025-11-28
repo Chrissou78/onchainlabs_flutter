@@ -5,7 +5,7 @@
 - Register wallet with https://ga-api.onchainlabs.ch.
 - Store mnemonic in secure storage on device.
 
-## 2.0.0
+## 2.0.1
 
 - Add Mint function thru API
 - Add Balance function thru API
