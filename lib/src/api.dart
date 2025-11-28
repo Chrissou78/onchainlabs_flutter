@@ -1,5 +1,3 @@
-import 'models.dart';
-
 /// Low-level API interface the SDK uses.
 /// You must implement this in `OnchainLabsApi`.
 abstract class PolygonWalletApi {
