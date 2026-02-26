@@ -21,7 +21,7 @@
 - Added amount conversion utilities
 - Auth headers cached for 4 hours
 
-## 3.1.0
+## 3.0.0
 - Added NFT membership read functions
 - Added hasMembership(), membershipOf(), getMembershipInfo()
 - Added getNftName(), getNftSymbol(), totalMemberships(), getNftBaseURI()

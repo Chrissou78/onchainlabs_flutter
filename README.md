@@ -36,7 +36,7 @@ In your app `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  Onchainlabs_flutter: ^3.1.0
+  Onchainlabs_flutter: ^3.0.0
 
 Code Examples : 
 
@@ -497,7 +497,6 @@ Future<void> goldPriceExample() async {
   print('USD Value: ${balanceInfo['formattedUsdValue']}');
 }
 
-NEW in v3.1.0: 
 ### 20. NFT Membership
 The Orocash contract includes a soulbound NFT membership system.
 

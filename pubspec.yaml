@@ -4,7 +4,7 @@ description: >
   Creates a wallet with mnemonic phrase and private key, registers it with
   https://ga-api.onchainlabs.ch, and stores the mnemonic locally.
 
-version: 3.1.0
+version: 3.0.0
 homepage: https://github.com/Chrissou78/onchainlabs_flutter
 repository: https://github.com/Chrissou78/onchainlabs_flutter
 issue_tracker: https://github.com/Chrissou78/onchainlabs_flutter/issues
@@ -27,6 +27,7 @@ dependencies:
   shared_preferences: ^2.2.2
   # NEW: EIP-7702 library for Flutter
   eip7702: ^1.1.0
+  convert: ^3.1.1
 
 dev_dependencies:
   flutter_test:
