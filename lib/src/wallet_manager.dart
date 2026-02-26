@@ -1,289 +1,175 @@
-import 'dart:convert';
+// lib/src/wallet_manager.dart
+
 import 'dart:typed_data';
-
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:web3dart/web3dart.dart';
-import 'package:bip39_plus/bip39_plus.dart' as bip39;
-import 'package:bip32_plus/bip32_plus.dart' as bip32;
-import 'package:hex/hex.dart';
-
 import 'api.dart';
-import 'models.dart';
-import 'eip7702_execute.dart';
+import 'api_onchainlabs.dart';
+import 'eip7702_executor.dart';
 
-class PolygonWalletManager {
-  static const String _mnemonicKey = 'wlltMnic';
+/// Manages wallet operations with secure storage
+class WalletManager {
+  final FlutterSecureStorage _storage;
+  final OnchainLabsApi _api;
+  Eip7702Executor? _executor;
+  
+  String? _delegateAddress;
+  String? _orocashAddress;
 
-  final PolygonWalletApi api;
-  static const FlutterSecureStorage _storage = FlutterSecureStorage();
+  WalletManager._({
+    required FlutterSecureStorage storage,
+    required OnchainLabsApi api,
+  })  : _storage = storage,
+        _api = api;
 
-  PolygonWalletManager({required this.api});
-
-  static Future<PolygonWalletManager> create(
-      PolygonWalletApi api) async {
-    return PolygonWalletManager(api: api);
+  /// Create a new WalletManager instance
+  static Future<WalletManager> create({
+    required String baseUrl,
+    required String rpcUrl,
+    int chainId = 80002,
+  }) async {
+    final storage = const FlutterSecureStorage();
+    final api = OnchainLabsApiImpl(baseUrl: baseUrl);
+    
+    final manager = WalletManager._(storage: storage, api: api);
+    await manager.initialize(rpcUrl: rpcUrl, chainId: chainId);
+    
+    return manager;
   }
 
-  /// Create a new wallet and store mnemonic securely.
-  ///
-  /// No backend calls here.
-  Future<PolygonWallet> createWallet() async {
-    final mnemonic = bip39.generateMnemonic(strength: 128);
-    final wallet = _walletFromMnemonic(mnemonic);
-
-    await _storage.write(key: _mnemonicKey, value: mnemonic);
-    return wallet;
-  }
-
-  /// Load stored wallet if possible, otherwise create a new one (local only).
-  Future<PolygonWallet> initWallet() async {
-    final saved = await _storage.read(key: _mnemonicKey);
-
-    if (saved != null && saved.trim().isNotEmpty) {
-      try {
-        return _walletFromMnemonic(saved);
-      } catch (_) {
-        throw Exception(
-          'Failed to initialize wallet from stored mnemonic. '
-          'Create a new wallet or restore from a valid mnemonic.',
-        );
+  /// Initialize the wallet manager
+  Future<void> initialize({
+    required String rpcUrl,
+    int chainId = 80002,
+  }) async {
+    print('=== FETCHING CONTRACT ADDRESSES ===');
+    print('API Base URL: ${_api.baseUrl}');
+    
+    try {
+      final contractsResult = await _api.getContracts();
+      print('Contracts result: $contractsResult');
+      
+      if (contractsResult['success'] == true) {
+        _delegateAddress = contractsResult['delegation'] ?? 
+                          contractsResult['delegator'] ?? 
+                          contractsResult['delegateAddress'];
+        _orocashAddress = contractsResult['gold'] ?? contractsResult['orocash'];
+        print('Delegate Address: $_delegateAddress');
+        print('OroCash Address: $_orocashAddress');
+      } else {
+        print('Failed to fetch contracts: ${contractsResult['message']}');
+        _delegateAddress = '0xa7dE21f5Fc304F2d9E012B7FaAa786621173d61C';
+        _orocashAddress = '0x367bCCB56c0661c47d0684777Ccf83C69c119A2B';
+        print('Using default addresses');
       }
+    } catch (e) {
+      print('Error fetching contracts: $e');
+      _delegateAddress = '0xa7dE21f5Fc304F2d9E012B7FaAa786621173d61C';
+      _orocashAddress = '0x367bCCB56c0661c47d0684777Ccf83C69c119A2B';
+      print('Using default addresses');
     }
-
-    return createWallet();
-  }
-
-  /// Restore from user-provided mnemonic, register, store it securely.
-  Future<PolygonWallet> restoreWallet(String mnemonic) async {
-    final trimmed = mnemonic.trim();
-
-    if (!bip39.validateMnemonic(trimmed)) {
-      throw Exception('Invalid mnemonic');
+    
+    if (_delegateAddress == null || _delegateAddress!.isEmpty) {
+      throw Exception('Delegate address is null or empty');
     }
-
-    final wallet = _walletFromMnemonic(trimmed);
-
-    final challenge = await api.getRandomMessage(wallet.address);
-    final sig = await _signMessage(
-      privateKeyHex: wallet.privateKeyHex,
-      message: challenge,
+    
+    final config = Eip7702Config(
+      rpcUrl: rpcUrl,
+      delegateAddress: _delegateAddress!,
+      chainId: chainId,
     );
+    
+    _executor = Eip7702Executor(config: config, api: _api);
+    // Note: Executor decimals will be initialized when wallet is loaded with privateKeyBytes
+    // by calling executor.initialize(privateKeyBytes) from home_page.dart
+    
+    print('=== WALLET MANAGER INITIALIZED ===');
+  }
 
-    final backendAddr = await api.registerWallet(challenge, sig);
-
-    if (backendAddr.toLowerCase() != wallet.address.toLowerCase()) {
-      throw Exception('Backend address mismatch');
+  /// Get the executor
+  Eip7702Executor get executor {
+    if (_executor == null) {
+      throw StateError('WalletManager not initialized. Call initialize() first.');
     }
-
-    await _storage.write(key: _mnemonicKey, value: trimmed);
-    return wallet;
+    return _executor!;
   }
 
-  /// Remove stored mnemonic from secure storage.
-  Future<void> clearStoredMnemonic() async {
-    await _storage.delete(key: _mnemonicKey);
+  /// Get delegate address
+  String? get delegateAddress => _delegateAddress;
+
+  /// Get OroCash address
+  String? get orocashAddress => _orocashAddress;
+
+  /// Save wallet address
+  Future<void> saveAddress(String address) async {
+    await _storage.write(key: 'wallet_address', value: address);
   }
 
-  /// Low-level: call backend /random directly.
-  Future<String> fetchRandomMessage(String address) {
-    return api.getRandomMessage(address);
+  /// Get saved wallet address
+  Future<String?> getAddress() async {
+    return await _storage.read(key: 'wallet_address');
   }
 
-  /// Low-level: call backend /register directly.
-  Future<String> authWithSignature(
-      String message, String signature) {
-    return api.registerWallet(message, signature);
+  /// Save private key
+  Future<void> savePrivateKey(Uint8List privateKey) async {
+    final hex = privateKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    await _storage.write(key: 'private_key', value: hex);
   }
 
-  /// High-level: full auth flow for a given wallet.
-  Future<String> authenticateWallet(PolygonWallet wallet) async {
-    final challenge = await api.getRandomMessage(wallet.address);
-    final sig = await _signMessage(
-      privateKeyHex: wallet.privateKeyHex,
-      message: challenge,
-    );
-    final backendAddr = await api.registerWallet(challenge, sig);
-
-    if (backendAddr.toLowerCase() != wallet.address.toLowerCase()) {
-      throw Exception('Backend address mismatch');
+  /// Get private key
+  Future<Uint8List?> getPrivateKey() async {
+    final hex = await _storage.read(key: 'private_key');
+    if (hex == null) return null;
+    
+    final bytes = <int>[];
+    for (var i = 0; i < hex.length; i += 2) {
+      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
     }
-
-    return backendAddr;
+    return Uint8List.fromList(bytes);
   }
 
-  /// High-level: auth flow using the stored mnemonic wallet.
-  Future<String> authenticateStoredWallet() async {
-    final saved = await _storage.read(key: _mnemonicKey);
-    if (saved == null || saved.trim().isEmpty) {
-      throw Exception('No stored mnemonic');
-    }
-
-    final wallet = _walletFromMnemonic(saved);
-    return authenticateWallet(wallet);
+  /// Clear wallet data
+  Future<void> clearWallet() async {
+    await _storage.delete(key: 'wallet_address');
+    await _storage.delete(key: 'private_key');
   }
 
-  // ---------- Gasless mint (EIP-7702) ----------
+  /// Delete wallet and clear cache
+  Future<void> deleteWallet() async {
+    executor.clearAuthCache();
+    await clearWallet();
+  }
 
-  /// Gasless mint using EIP-7702 execute().
-  ///
-  /// - adminMnemonic: admin / minter wallet mnemonic (already delegated)
-  /// - destinationWallet: receiver (user wallet)
-  /// - amount: HUMAN amount ("1000", "1.5", etc.), converted to 6 decimals
-  /// - mintContractAddress: your MintToken contract address
-  Future<Map<String, dynamic>> mintGaslessWithAdmin({
-    required String adminMnemonic,
-    required PolygonWallet destinationWallet,
-    required String amount,
-    required String mintContractAddress,
-    bool waitForTx = false,
-  }) async {
-    // 1) Derive admin signer
-    final seed = bip39.mnemonicToSeed(adminMnemonic);
-    final root = bip32.BIP32.fromSeed(seed);
-    const path = "m/44'/60'/0'/0/0";
-    final child = root.derivePath(path);
+  /// Check if wallet exists
+  Future<bool> hasWallet() async {
+    final address = await getAddress();
+    return address != null && address.isNotEmpty;
+  }
 
-    final privBytes = child.privateKey;
-    if (privBytes == null) {
-      throw Exception('Admin private key derivation failed');
-    }
+  /// Get OroCash balance as BigInt
+  Future<BigInt> getOroCashBalance(Uint8List privateKeyBytes) async {
+    return executor.getOroCashBalanceFromWallet(privateKeyBytes);
+  }
 
-    final privHex = HEX.encode(privBytes);
-    final adminSigner = EthPrivateKey.fromHex(privHex);
+  /// Get OroCash balance formatted (uses cached decimals from executor)
+  Future<double> getOroCashBalanceFormatted(Uint8List privateKeyBytes) async {
+    return executor.getOroCashBalanceFromWalletFormatted(privateKeyBytes);
+  }
 
-    // 2) Convert human amount to base units (6 decimals)
-    final baseAmount = _toBaseUnits(amount, decimals: 6);
-
-    // 3) Use EIP-7702 executor
-    final executor = Eip7702Executor(api: api);
-
-    return executor.executeMintGasless(
-      adminSigner: adminSigner,
-      destination: destinationWallet,
-      amountBaseUnits: baseAmount,
-      waitForTx: waitForTx,
-      mintContractAddress: mintContractAddress,
+  /// Create mainnet wallet manager
+  static Future<WalletManager> createMainnet(String baseUrl) {
+    return WalletManager.create(
+      baseUrl: baseUrl,
+      rpcUrl: 'https://polygon-rpc.com',
+      chainId: 137,
     );
   }
 
-  /// Check if the admin wallet (derived from mnemonic) is delegated.
-  ///
-  /// This does NOT perform the EIP-7702 authorize(). It only calls /status.
-  /// If not delegated, this throws with an error.
-  Future<void> checkAdminDelegation({
-    required String adminMnemonic,
-  }) async {
-    final seed = bip39.mnemonicToSeed(adminMnemonic);
-    final root = bip32.BIP32.fromSeed(seed);
-    const path = "m/44'/60'/0'/0/0";
-    final child = root.derivePath(path);
-
-    final privBytes = child.privateKey;
-    if (privBytes == null) {
-      throw Exception('Admin private key derivation failed');
-    }
-
-    final privHex = HEX.encode(privBytes);
-    final adminSigner = EthPrivateKey.fromHex(privHex);
-
-    final executor = Eip7702Executor(api: api);
-    await executor.ensureDelegated(adminSigner);
-  }
-
-  // ---------- Wallet derivation / signing helpers ----------
-
-  /// Derive Polygon/EVM wallet from BIP39 mnemonic using BIP44 path.
-  PolygonWallet _walletFromMnemonic(String mnemonic) {
-    final seed = bip39.mnemonicToSeed(mnemonic);
-    final root = bip32.BIP32.fromSeed(seed);
-
-    const path = "m/44'/60'/0'/0/0";
-    final child = root.derivePath(path);
-
-    final privBytes = child.privateKey;
-    if (privBytes == null) {
-      throw Exception('Private key derivation failed');
-    }
-
-    final privHex = HEX.encode(privBytes);
-    final creds = EthPrivateKey.fromHex(privHex);
-
-    // Former logic: use toString() and force 0x prefix if missing.
-    final raw = creds.address.toString();
-    final addr = raw.startsWith('0x') ? raw : '0x$raw';
-
-    return PolygonWallet(
-      address: addr,
-      privateKeyHex: privHex,
-      mnemonic: mnemonic,
+  /// Create Amoy testnet wallet manager
+  static Future<WalletManager> createAmoy(String baseUrl) {
+    return WalletManager.create(
+      baseUrl: baseUrl,
+      rpcUrl: 'https://rpc-amoy.polygon.technology',
+      chainId: 80002,
     );
-  }
-
-  /// Sign message in Ethereum personal_sign format and return 0x-hex.
-  Future<String> _signMessage({
-    required String privateKeyHex,
-    required String message,
-  }) async {
-    final creds = EthPrivateKey.fromHex(privateKeyHex);
-    final payload = Uint8List.fromList(utf8.encode(message));
-
-    final sigBytes = creds.signPersonalMessageToUint8List(payload);
-    return '0x${HEX.encode(sigBytes)}';
-  }
-
-  /// Convert human amount (e.g. "1000" or "1.23") into base units string
-  /// with [decimals] decimal places (e.g. 6 -> "1000000000" or "1230000").
-  String _toBaseUnits(String humanAmount, {required int decimals}) {
-    final input = humanAmount.trim();
-    if (input.isEmpty) {
-      throw Exception('Amount cannot be empty');
-    }
-
-    if (input.split('.').length > 2) {
-      throw Exception('Invalid amount format');
-    }
-
-    String whole;
-    String frac;
-
-    if (input.contains('.')) {
-      final parts = input.split('.');
-      whole = parts[0];
-      frac = parts[1];
-    } else {
-      whole = input;
-      frac = '';
-    }
-
-    if (whole.startsWith('+')) {
-      whole = whole.substring(1);
-    }
-
-    if (whole.startsWith('-')) {
-      throw Exception('Amount cannot be negative');
-    }
-
-    final wholeDigits = whole.isEmpty ? '0' : whole;
-    if (!RegExp(r'^[0-9]+$').hasMatch(wholeDigits)) {
-      throw Exception('Invalid whole part in amount');
-    }
-
-    if (frac.isNotEmpty && !RegExp(r'^[0-9]+$').hasMatch(frac)) {
-      throw Exception('Invalid fractional part in amount');
-    }
-
-    if (frac.length > decimals) {
-      throw Exception(
-        'Too many decimal places. Max is $decimals for this token.',
-      );
-    }
-
-    final paddedFrac = frac.padRight(decimals, '0');
-
-    final combined = wholeDigits + paddedFrac;
-
-    final noLeadingZeros =
-        combined.replaceFirst(RegExp(r'^0+'), '');
-    return noLeadingZeros.isEmpty ? '0' : noLeadingZeros;
   }
 }

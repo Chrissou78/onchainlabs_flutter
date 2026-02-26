@@ -1,6 +1,17 @@
 library onchainlabs_flutter;
 
-export 'src/models.dart' show PolygonWallet;
-export 'src/api.dart' show PolygonWalletApi;
-export 'src/api_onchainlabs.dart' show OnchainLabsApi;
-export 'src/wallet_manager.dart' show PolygonWalletManager;
+// API
+export 'src/api.dart';
+export 'src/api_onchainlabs.dart';
+
+// EIP-7702 Executor
+export 'src/eip7702_executor.dart';
+
+// Extensions
+export 'src/eip7702_extensions.dart';
+
+// OroCash Contract Helper
+export 'src/orocash_contract.dart';
+
+// Wallet Manager
+export 'src/wallet_manager.dart';

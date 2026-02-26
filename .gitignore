@@ -1,0 +1,21 @@
+# Example app - keep locally only
+example/
+
+# Build outputs
+**/build/
+*.apk
+*.aab
+*.ipa
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+pubspec.lock

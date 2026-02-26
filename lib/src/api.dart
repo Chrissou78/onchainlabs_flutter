@@ -1,43 +1,61 @@
-/// Low-level API interface the SDK uses.
-/// You must implement this in `OnchainLabsApi`.
-abstract class PolygonWalletApi {
-  // ----- existing auth / random / mint -----
+// lib/src/api.dart
 
-  Future<String> getRandomMessage(String address);
+/// Abstract interface for OnchainLabs API
+abstract class OnchainLabsApi {
+  String get baseUrl;
 
-  Future<String> registerWallet(String message, String signature);
-
-  /// Legacy HTTP mint with headers (x-message / x-signature).
-  /// You can keep using this for non-gasless flows.
-  Future<Map<String, dynamic>> mint({
-    required String address,
-    required String amount,
-    required String message,
-    required String signature,
+  Future<Map<String, dynamic>> getBalance(String address, Map<String, String> headers);
+  
+  /// Get a random message for signing
+  Future<Map<String, dynamic>> getRandomMessage(String address);
+  
+  /// Register a new wallet
+  Future<Map<String, dynamic>> registerWallet(Map<String, String> headers);
+  
+  /// Authorize a transaction with EIP-7702
+  Future<Map<String, dynamic>> authorizeTransaction(
+    Map<String, dynamic> authData,
+    Map<String, String> headers, {
+    String? walletAddress,
     bool waitForTx = false,
   });
-
-  // ----- EIP-7702 / gasless extras -----
-
-  /// Returns nonces for EIP-7702 delegation:
-  /// { nonce, delegationNonce }
-  Future<Map<String, dynamic>> getNonces(Map<String, String> headers);
-
-  /// Returns delegation / status info:
-  /// e.g. { delegated: true, ... }
-  Future<Map<String, dynamic>> status(Map<String, String> headers);
-
-  /// Returns contract ABI JSON (string or JSON object).
-  Future<dynamic> getContractABI(String contractAddress);
-
-  /// Sponsors gasless execution.
-  ///
-  /// `calls` is a list of:
-  ///   [contractAddress (string), value (stringified uint256), data (0x...)]
-  Future<Map<String, dynamic>> sponsor(
-    List<List<dynamic>> calls,
+  
+  Future<Map<String, dynamic>> sponsorTransaction(
+    List<dynamic> calls,
     String signature,
-    bool waitForTx,
+    Map<String, String> headers, {
+    bool waitForTx = false,
+  });
+  
+  /// Get wallet status
+  Future<Map<String, dynamic>> getWalletStatus(Map<String, String> headers);
+  
+  /// Get wallet nonce
+  Future<Map<String, dynamic>> getWalletNonce(Map<String, String> headers);
+  
+  /// Read from OroCash contract
+  Future<Map<String, dynamic>> oroCashRead(
+    String method,
+    Map<String, String> headers, {
+    List<dynamic>? params,
+  });
+  
+  /// Admin mint tokens
+  Future<Map<String, dynamic>> adminMint(
+    String toAddress,
+    String amount,
     Map<String, String> headers,
   );
+  
+  /// Admin whitelist wallet
+  Future<Map<String, dynamic>> adminWhitelist(
+    String walletAddress,
+    Map<String, String> headers,
+  );
+  
+  /// Get contract addresses
+  Future<Map<String, dynamic>> getContracts();
+  
+  /// Get gold price (price of 1mg of gold in USD = price of 1 OROCASH token)
+  Future<Map<String, dynamic>> getGoldPrice(Map<String, String> headers);
 }
