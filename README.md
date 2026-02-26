@@ -36,23 +36,36 @@ In your app `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  Onchainlabs_flutter: ^3.0.0
+  Onchainlabs_flutter: ^3.2.0
 
 Code Examples : 
 
 ### 1. Generate a wallet (create + register + store mnemonic)
 
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+import 'package:bip39_plus/bip39_plus.dart' as bip39;
+import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
 Future<void> createWalletExample() async {
-  final api = OnchainLabsApi();
-  final manager = await PolygonWalletManager.create(api);
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
 
-  final wallet = await manager.createWallet();
+  // Generate mnemonic and derive private key
+  final mnemonic = bip39.generateMnemonic();
+  final seed = bip39.mnemonicToSeed(mnemonic);
+  final root = bip32.BIP32.fromSeed(seed);
+  final child = root.derivePath("m/44'/60'/0'/0/0");
+  final privateKeyBytes = child.privateKey!;
 
-  print('Address: ${wallet.address}');
-  print('Private key (hex): 0x${wallet.privateKeyHex}');
-  print('Mnemonic: ${wallet.mnemonic}');
+  // Get address
+  final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
+
+  // Save to secure storage
+  await walletManager.savePrivateKey(privateKeyBytes);
+  await walletManager.saveAddress(address);
+
+  print('Address: $address');
+  print('Private key (hex): 0x${privateKeyBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
+  print('Mnemonic: $mnemonic');
 }
 
 ### 2. Authenticate a wallet (sign random message and send to backend)
@@ -65,14 +78,23 @@ You can authenticate either:
 #### 2.1 Auth the current wallet
 
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+import 'dart:typed_data';
 
-Future<void> authCurrentWalletExample(PolygonWallet wallet) async {
-  final api = OnchainLabsApi();
-  final manager = await PolygonWalletManager.create(api);
+Future<void> authCurrentWalletExample(Uint8List privateKeyBytes) async {
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
 
-  final backendAddress = await manager.authenticateWallet(wallet);
+  const apiKey = 'your-api-key';
 
-  print('Backend authenticated address: $backendAddress');
+  final result = await walletManager.executor.registerAndWhitelist(
+    privateKeyBytes,
+    apiKey,
+  );
+
+  if (result.success) {
+    print('Backend authenticated address: ${walletManager.executor.getAddressFromPrivateKey(privateKeyBytes)}');
+  } else {
+    print('Error: ${result.error}');
+  }
 }
 
 #### 2.2 Auth the stored wallet (from secure storage)
@@ -80,12 +102,26 @@ Future<void> authCurrentWalletExample(PolygonWallet wallet) async {
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 
 Future<void> authStoredWalletExample() async {
-  final api = OnchainLabsApi();
-  final manager = await PolygonWalletManager.create(api);
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final privateKeyBytes = await walletManager.getPrivateKey();
 
-  final backendAddress = await manager.authenticateStoredWallet();
+  if (privateKeyBytes == null) {
+    print('No wallet found in storage');
+    return;
+  }
 
-  print('Backend authenticated stored wallet: $backendAddress');
+  const apiKey = 'your-api-key';
+
+  final result = await walletManager.executor.registerAndWhitelist(
+    privateKeyBytes,
+    apiKey,
+  );
+
+  if (result.success) {
+    print('Backend authenticated stored wallet: ${await walletManager.getAddress()}');
+  } else {
+    print('Error: ${result.error}');
+  }
 }
 
 ### 3. Restore a wallet from a mnemonic phrase
@@ -97,18 +133,27 @@ Use this when the user already has a recovery phrase and you want to:
 - store the mnemonic in secure storage  
 
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+import 'package:bip39_plus/bip39_plus.dart' as bip39;
+import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
 Future<void> restoreWalletFromMnemonicExample() async {
-  final api = OnchainLabsApi();
-  final manager = await PolygonWalletManager.create(api);
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
 
   const userMnemonic =
       'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
 
-  final wallet = await manager.restoreWallet(userMnemonic);
+  final seed = bip39.mnemonicToSeed(userMnemonic);
+  final root = bip32.BIP32.fromSeed(seed);
+  final child = root.derivePath("m/44'/60'/0'/0/0");
+  final privateKeyBytes = child.privateKey!;
 
-  print('Restored wallet address: ${wallet.address}');
-  print('Restored private key (hex): 0x${wallet.privateKeyHex}');
+  final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
+
+  await walletManager.savePrivateKey(privateKeyBytes);
+  await walletManager.saveAddress(address);
+
+  print('Restored wallet address: $address');
+  print('Restored private key (hex): 0x${privateKeyBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
 }
 
 ### 4. Restore a wallet from a private key
@@ -120,33 +165,37 @@ Use this if the user owns a **raw EVM private key** (64-hex string) and needs to
 - store it securely  
 
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+import 'package:hex/hex.dart';
+import 'dart:typed_data';
 
 Future<void> restoreWalletFromPrivateKeyExample() async {
-  final api = OnchainLabsApi();
-  final manager = await PolygonWalletManager.create(api);
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
 
   const userPrivateKey =
       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-  final wallet = await manager.restoreWalletFromPrivateKey(userPrivateKey);
+  final privateKeyBytes = Uint8List.fromList(HEX.decode(userPrivateKey));
+  final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
 
-  print('Restored wallet address: ${wallet.address}');
+  await walletManager.savePrivateKey(privateKeyBytes);
+  await walletManager.saveAddress(address);
+
+  print('Restored wallet address: $address');
 }
 
 ### 5. Mint tokens and ask token balance using an API public Key
 
 import 'package:onchainlabs_flutter/simple_onchain_api.dart';
 
-/// Set your public key (user input in secured storage in production)
-const publicKey =
-    'suQxa7jxvgfQmrKQYhCT6TZxYxbmNUHrG82VPEdYy01eZ1wsQwWjUZJPSZyyapQJ';
+/// Set your public key (store securely in production)
+const publicKey = 'your-public-api-key';
 
 final api = SimpleOnchainApi(publicKey: publicKey);
 
 ### 5.1 Convert Human amount (base units 6 decimals)
 String toBaseUnits(String human, {int decimals = 6}) {
   if (!human.contains('.')) {
-    return human + '0'.padRight(decimals, '0');
+    return human + '0' * decimals;
   }
   final parts = human.split('.');
   final whole = parts[0];
@@ -159,13 +208,13 @@ String toBaseUnits(String human, {int decimals = 6}) {
 }
 
 ### 5.2 Mint Tokens Full API mode
-Future<void> mintExample(PolygonWallet wallet) async {
+Future<void> mintExample(String walletAddress) async {
   final api = SimpleOnchainApi(publicKey: publicKey);
 
   final amount = toBaseUnits("1000"); // → "1000000000"
 
   final res = await api.mint(
-    address: wallet.address,
+    address: walletAddress,
     amount: amount,
     waitForTx: true,
   );
@@ -174,15 +223,28 @@ Future<void> mintExample(PolygonWallet wallet) async {
 }
 
 ### 5.3 Get Token Balance
-Future<void> balanceExample(PolygonWallet wallet) async {
+Method A - Simple API (recommended for most cases):
+
+Future<void> balanceExample(String walletAddress) async {
   final api = SimpleOnchainApi(publicKey: publicKey);
 
-  final res = await api.balanceOf(wallet.address);
+  final res = await api.balanceOf(walletAddress);
 
   print('Balance: $res');
 }
 
-NEW in v3.0.0: 
+Method B - Via WalletManager with signature (for authenticated requests):
+
+CopyFuture<void> balanceExampleAuthenticated() async {
+  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final privateKeyBytes = await walletManager.getPrivateKey();
+  final address = await walletManager.getAddress();
+
+  final balance = await walletManager.getOroCashBalanceFormatted(privateKeyBytes!, address!);
+
+  print('Balance: $balance');
+}
+
 EIP-7702 Gasless Transactions
 The SDK now supports EIP-7702 for gasless transactions. Users don't need MATIC/POL to transact.
 

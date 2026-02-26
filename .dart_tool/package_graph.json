@@ -5,10 +5,11 @@
   "packages": [
     {
       "name": "onchainlabs_flutter",
-      "version": "3.1.0",
+      "version": "3.0.0",
       "dependencies": [
         "bip32_plus",
         "bip39_plus",
+        "convert",
         "eip7702",
         "flutter",
         "flutter_secure_storage",
@@ -44,6 +45,13 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "convert",
+      "version": "3.1.2",
+      "dependencies": [
+        "typed_data"
       ]
     },
     {
@@ -238,6 +246,13 @@
       ]
     },
     {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
+      ]
+    },
+    {
       "name": "freezed_annotation",
       "version": "3.1.0",
       "dependencies": [
@@ -315,13 +330,6 @@
       ]
     },
     {
-      "name": "convert",
-      "version": "3.1.2",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
       "name": "bs58check",
       "version": "1.0.2",
       "dependencies": [
@@ -334,13 +342,6 @@
       "version": "3.0.7",
       "dependencies": [
         "typed_data"
-      ]
-    },
-    {
-      "name": "typed_data",
-      "version": "1.4.0",
-      "dependencies": [
-        "collection"
       ]
     },
     {

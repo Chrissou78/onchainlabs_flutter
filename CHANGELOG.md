@@ -11,7 +11,7 @@
 - Add Balance function thru API
 - Add Test public key
 
-## 3.0.0
+## 3.2.0
 - Added EIP-7702 gasless transaction support
 - Added WalletManager for simplified wallet management
 - Added Eip7702Executor for gasless operations
@@ -21,7 +21,7 @@
 - Added amount conversion utilities
 - Auth headers cached for 4 hours
 
-## 3.0.0
+## 3.2.0
 - Added NFT membership read functions
 - Added hasMembership(), membershipOf(), getMembershipInfo()
 - Added getNftName(), getNftSymbol(), totalMemberships(), getNftBaseURI()
