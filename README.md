@@ -6,7 +6,7 @@ Goal: give you a simple way to:
 
 - create a Polygon-compatible wallet (address + private key + mnemonic)
 - sign a backend challenge
-- register the wallet with `https://ga-api.onchainlabs.ch`
+- register the wallet with `https://api-ga.onchainlabs.ch`
 - store the mnemonic locally on the device
 - mint tokens
 - Get token balance
@@ -18,13 +18,11 @@ Goal: give you a simple way to:
 
 ## What it does
 
-- Generates a BIP39 mnemonic (12 words by default).
-- Derives a private key with BIP32 path `m/44'/60'/0'/0/0`.
-- Builds an EVM address using `web3dart`.
-- Calls `POST https://ga-api.onchainlabs.ch/random` with `{ address }`.
-- Signs the returned `signMessage` with the wallet (personal sign).
-- Calls `POST https://ga-api.onchainlabs.ch/register` with `{ message, signature }`.
-- Stores securely the mnemonic string under the key `wlltMnic`.
+- **Wallet creation** (local, offline): generates a BIP39 mnemonic (12 words by default), derives a private key with BIP32 path `m/44'/60'/0'/0/0`, and builds an EVM address using `web3dart`. The private key and address are stored in `FlutterSecureStorage`. The mnemonic is returned to you but **not persisted by the library** — you are responsible for storing it securely if needed.
+- **Backend registration** (separate step): authenticates the wallet with `https://api-ga.onchainlabs.ch` by calling `POST /random` to obtain a challenge, signing it (personal sign), then calling `POST /register`. Optionally whitelists via `POST /admin/whitelist`.
+- **Token operations**: mint, transfer, buy, sell, burn, approve, and read balances and contract state.
+- **EIP-7702 gasless transactions**: users don't need MATIC/POL to transact.
+
 
 The wallet is a normal Ethereum wallet, so the address type works on Polygon.
 
@@ -40,14 +38,14 @@ dependencies:
 
 Code Examples : 
 
-### 1. Generate a wallet (create + register + store mnemonic)
+### 1. Generate a wallet (create + store locally)
 
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 import 'package:bip39_plus/bip39_plus.dart' as bip39;
 import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
 Future<void> createWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
   // Generate mnemonic and derive private key
   final mnemonic = bip39.generateMnemonic();
@@ -81,7 +79,7 @@ import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 import 'dart:typed_data';
 
 Future<void> authCurrentWalletExample(Uint8List privateKeyBytes) async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
   const apiKey = 'your-api-key';
 
@@ -102,7 +100,7 @@ Future<void> authCurrentWalletExample(Uint8List privateKeyBytes) async {
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 
 Future<void> authStoredWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
 
   if (privateKeyBytes == null) {
@@ -137,7 +135,7 @@ import 'package:bip39_plus/bip39_plus.dart' as bip39;
 import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
 Future<void> restoreWalletFromMnemonicExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
   const userMnemonic =
       'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
@@ -169,7 +167,7 @@ import 'package:hex/hex.dart';
 import 'dart:typed_data';
 
 Future<void> restoreWalletFromPrivateKeyExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
   const userPrivateKey =
       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -236,7 +234,7 @@ Future<void> balanceExample(String walletAddress) async {
 Method B - Via WalletManager with signature (for authenticated requests):
 
 CopyFuture<void> balanceExampleAuthenticated() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final address = await walletManager.getAddress();
 
@@ -252,17 +250,17 @@ The SDK now supports EIP-7702 for gasless transactions. Users don't need MATIC/P
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 
 // For Polygon Amoy Testnet
-final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
 // For Polygon Mainnet
-final walletManager = await WalletManager.createMainnet('https://ga-api.onchainlabs.ch');
+final walletManager = await WalletManager.createMainnet('https://api-ga.onchainlabs.ch');
 
 ### 7. Create a Wallet with EIP-7702 Support
 import 'package:bip39_plus/bip39_plus.dart' as bip39;
 import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
 Future<void> createWalletV3Example() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
 
   // Generate mnemonic and derive private key
   final mnemonic = bip39.generateMnemonic();
@@ -287,7 +285,7 @@ Future<void> createWalletV3Example() async {
 
 ### 8. Register and Whitelist a Wallet
 Future<void> registerWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
 
   const secretApiKey = 'your-admin-api-key';
@@ -306,7 +304,7 @@ Future<void> registerWalletExample() async {
 
 ### 9. Authorize for EIP-7702 (Enable Gasless)
 Future<void> authorizeWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
 
   final result = await walletManager.executor.authorize(
@@ -325,7 +323,7 @@ Future<void> authorizeWalletExample() async {
 
 ### 10. Transfer Tokens (Gasless)
 Future<void> transferExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final contractAddress = walletManager.orocashAddress!;
 
@@ -347,7 +345,7 @@ Future<void> transferExample() async {
 
 ### 11. Buy, Sell, and Burn Tokens (Gasless)
 Future<void> tokenOperationsExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final contractAddress = walletManager.orocashAddress!;
   final executor = walletManager.executor;
@@ -381,7 +379,7 @@ Future<void> tokenOperationsExample() async {
 
 ### 12. Approve Spender (Gasless)
 Future<void> approveExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final contractAddress = walletManager.orocashAddress!;
 
@@ -406,7 +404,7 @@ Future<void> approveExample() async {
 ### 13. Batch Transactions (Gasless)
 Execute multiple operations in a single transaction:
 Future<void> batchTransferExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final contractAddress = walletManager.orocashAddress!;
   final executor = walletManager.executor;
@@ -434,7 +432,7 @@ Future<void> batchTransferExample() async {
 
 ### 14. Read Token Information
 Future<void> tokenInfoExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
 
@@ -450,7 +448,7 @@ Future<void> tokenInfoExample() async {
 
 ### 15. Read Contract State
 Future<void> contractStateExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
 
@@ -465,7 +463,7 @@ Future<void> contractStateExample() async {
 
 ### 16. Read Fees (Basis Points)
 Future<void> feesExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
 
@@ -483,7 +481,7 @@ Future<void> feesExample() async {
 
 ### 17. Read Transaction Limits
 Future<void> limitsExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
   final address = executor.getAddressFromPrivateKey(privateKeyBytes!);
@@ -501,7 +499,7 @@ Future<void> limitsExample() async {
 
 ### 18. Check User Roles
 Future<void> rolesExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
   final address = executor.getAddressFromPrivateKey(privateKeyBytes!);
@@ -531,7 +529,7 @@ Future<void> rolesExample() async {
 
 ### 19. OROCASH token = 1mg of gold
 Future<void> goldPriceExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
 
@@ -563,7 +561,7 @@ Future<void> goldPriceExample() async {
 The Orocash contract includes a soulbound NFT membership system.
 
 Future<void> nftMembershipExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
   final executor = walletManager.executor;
 
@@ -593,7 +591,7 @@ Future<void> nftMembershipExample() async {
 Fetch all contract information in a single call:
 
 Future<void> allInfoExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
 
   final allInfo = await walletManager.executor.getAllContractInfo(privateKeyBytes!);
@@ -626,7 +624,7 @@ print('Formatted: $formatted');  // "100.5"
 
 ### 23. Admin Operations
 Future<void> adminExample() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api.onchainlabs.ch');
+  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
   final privateKeyBytes = await walletManager.getPrivateKey();
 
   const secretApiKey = 'your-secret-api-key';
@@ -645,4 +643,51 @@ Future<void> adminExample() async {
     '0xWalletToWhitelist',
   );
 }
+
+### 24. Check Wallet Status (Registration, Whitelist, Delegation)
+Use the /status endpoint to check if a wallet is registered, whitelisted, and delegated. No API key required - only wallet signature.
+
+# Check if wallet is registered
+
+CopyFuture<void> checkWalletRegistration() async {
+  final walletManager = await WalletManager.createAmoy('https://ga-api-dev.onchainlabs.ch');
+  final privateKeyBytes = await walletManager.getPrivateKey();
+
+  final result = await walletManager.executor.getWalletStatus(privateKeyBytes!);
+
+  if (result.success) {
+    // Wallet IS registered
+    print('Wallet is registered!');
+  } else if (result.error?.contains('Wallet not found') == true) {
+    // Wallet is NOT registered
+    print('Wallet is NOT registered - call registerWallet() first');
+  } else {
+    print('Error: ${result.error}');
+  }
+}
+
+# Get full wallet status
+
+CopyFuture<void> getFullWalletStatus() async {
+  final walletManager = await WalletManager.createAmoy('https://ga-api-dev.onchainlabs.ch');
+  final privateKeyBytes = await walletManager.getPrivateKey();
+
+  final result = await walletManager.executor.getWalletStatus(privateKeyBytes!);
+
+  if (result.success) {
+    final data = result.data!;
+    print('Registered: true');
+    print('Whitelisted: ${data['whitelisted']}');
+    print('Delegated: ${data['delegated']}');
+    print('Roles: ${data['roles']}');
+  } else {
+    print('Error: ${result.error}');
+  }
+}
+
+# Status response
+Field	        Type	  Description
+whitelisted	  bool	  Wallet has Whitelist role (can transact)
+delegated	    bool	  EIP-7702 delegation is active (gasless enabled)
+roles	        List	  Array of role IDs assigned to wallet
 

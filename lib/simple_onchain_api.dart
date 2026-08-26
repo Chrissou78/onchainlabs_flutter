@@ -15,7 +15,7 @@ class SimpleOnchainApi {
 
   SimpleOnchainApi({
     required this.publicKey,
-    this.baseUrl = 'https://dev-ga-api.onchainlabs.ch',
+    this.baseUrl = 'https://ga-api-dev.onchainlabs.ch',
   });
 
   Exception _err(String path, http.Response resp) {
