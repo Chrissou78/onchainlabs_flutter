@@ -1,0 +1,65 @@
+name: CI
+
+# Verification runs here rather than on a developer machine: the Flutter SDK
+# unpacks into a user-writable directory, which application-control policy on
+# managed Windows machines blocks from executing. GitHub's runners are the
+# supported place to analyse and publish this package.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      # analysis_options.yaml sets avoid_print to error, so a print() that
+      # reaches the SDK fails the build rather than scrolling past in warnings.
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+        continue-on-error: true
+
+      - name: Publish dry run
+        run: flutter pub publish --dry-run
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # No test/ directory exists yet — audit finding D-02. Once cryptographic
+      # test vectors land (BIP-39/BIP-32 derivation, ABI encoding against a
+      # reference, signatures against fixed vectors), this becomes the gate
+      # that stops area-4 findings regressing.
+      - name: Test
+        run: |
+          if [ -d test ]; then
+            flutter test
+          else
+            echo "::warning::No test/ directory — see audit finding D-02."
+          fi

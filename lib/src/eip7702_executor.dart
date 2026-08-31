@@ -152,10 +152,43 @@ class DelegationStatus {
   final bool isDelegated;
   final String? delegateAddress;
 
+  /// Why the status could not be determined, or null when it was.
+  ///
+  /// `isDelegated == false` alone is ambiguous: it is also what a lookup
+  /// failure produces. Check [isKnown] before treating a false as
+  /// authoritative — a caller that gates on delegation would otherwise read a
+  /// network failure as "definitely not delegated".
+  final String? error;
+
   const DelegationStatus({
     required this.isDelegated,
     this.delegateAddress,
+    this.error,
   });
+
+  /// True when the lookup completed and [isDelegated] reflects chain state.
+  bool get isKnown => error == null;
+}
+
+/// Outcome of a membership lookup.
+///
+/// Separates the two things a bare `false` conflates: the address genuinely
+/// has no membership, and the check did not complete.
+class MembershipCheck {
+  /// True only when a completed lookup found a membership.
+  final bool hasMembership;
+
+  /// Why the lookup could not be completed, or null when it was.
+  final String? error;
+
+  const MembershipCheck._(this.hasMembership, this.error);
+
+  const MembershipCheck.known(bool value) : this._(value, null);
+
+  const MembershipCheck.unknown(String reason) : this._(false, reason);
+
+  /// True when the lookup completed and [hasMembership] is authoritative.
+  bool get isKnown => error == null;
 }
 
 /// Gold price data
@@ -226,6 +259,23 @@ class Eip7702Executor {
   DateTime? _goldPriceCacheExpiry;
   static const _goldPriceCacheDuration = Duration(minutes: 5);
 
+  /// Last price that passed validation, retained across cache expiry so a
+  /// newly quoted price can be sanity-checked against it.
+  GoldPrice? _lastGoodGoldPrice;
+
+  /// Absolute plausibility band for the price of 1mg of gold, in USD.
+  ///
+  /// Deliberately wide — this rejects a corrupted, zeroed or wildly
+  /// manipulated quote, not ordinary market movement. Widen or narrow it for
+  /// your own risk appetite; it is not a market-data control.
+  double goldPriceMinUsdPerMg = 0.005;
+  double goldPriceMaxUsdPerMg = 1.0;
+
+  /// Largest tolerated move from the last validated price, as a fraction.
+  /// 0.5 means a new quote may not differ from the last good one by more than
+  /// 50%. Set to null to disable the relative check.
+  double? goldPriceMaxRelativeMove = 0.5;
+
   Eip7702Executor({
     required this.config,
     required OnchainLabsApi api,
@@ -233,7 +283,6 @@ class Eip7702Executor {
 
   /// Initialize the executor and fetch token decimals
   Future<void> initialize(Uint8List privateKeyBytes) async {
-    print('Eip7702Executor initializing with chainId: ${config.chainId}');
     
     try {
       // Fetch and cache token decimals
@@ -241,10 +290,7 @@ class Eip7702Executor {
       _decimalMultiplier = BigInt.from(10).pow(_tokenDecimals);
       _isInitialized = true;
       
-      print('Token decimals cached: $_tokenDecimals');
-      print('Decimal multiplier: $_decimalMultiplier');
     } catch (e) {
-      print('Warning: Failed to fetch token decimals, using default (6): $e');
       _tokenDecimals = 6;
       _decimalMultiplier = BigInt.from(1000000);
       _isInitialized = true;
@@ -309,8 +355,6 @@ class Eip7702Executor {
     final credentials = EthPrivateKey(privateKeyBytes);
     final address = credentials.address;
     
-    print('Address type: ${address.runtimeType}');
-    print('Address toString: ${address.toString()}');
     
     final addressStr = address.toString();
     final withPrefix = addressStr.startsWith('0x') ? addressStr : '0x$addressStr';
@@ -322,16 +366,11 @@ class Eip7702Executor {
     final credentials = EthPrivateKey(privateKeyBytes);
     final messageBytes = Uint8List.fromList(utf8.encode(message));
     
-    print('=== SIGN DEBUG ===');
-    print('Message: $message');
-    print('Message bytes length: ${messageBytes.length}');
     
     final signature = credentials.signPersonalMessageToUint8List(messageBytes);
     
-    print('Signature length: ${signature.length}');
     
     final signatureHex = '0x${_bytesToHex(signature, include0x: false)}';
-    print('Signature: $signatureHex');
     
     return signatureHex;
   }
@@ -345,12 +384,9 @@ class Eip7702Executor {
         _cachedAddress == address &&
         _cacheExpiry != null &&
         DateTime.now().isBefore(_cacheExpiry!)) {
-      print('=== USING CACHED AUTH HEADERS ===');
       return _cachedAuthHeaders!;
     }
     
-    print('=== CREATING NEW AUTH HEADERS ===');
-    print('Address: $address');
     
     // Get random message
     final randomResult = await _api.getRandomMessage(address);
@@ -359,11 +395,9 @@ class Eip7702Executor {
     }
     
     final signMessageStr = randomResult['signMessage'] as String;
-    print('SignMessage from server: $signMessageStr');
     
     // Sign the message
     final signature = signMessage(privateKeyBytes, signMessageStr);
-    print('Generated Signature: $signature');
     
     // Cache the headers
     _cachedAuthHeaders = {
@@ -374,7 +408,6 @@ class Eip7702Executor {
     _cachedAddress = address;
     _cacheExpiry = DateTime.now().add(_cacheDuration);
     
-    print('=== HEADERS CACHED (valid for 4 hours) ===');
     
     return _cachedAuthHeaders!;
   }
@@ -384,7 +417,6 @@ class Eip7702Executor {
     _cachedAuthHeaders = null;
     _cachedAddress = null;
     _cacheExpiry = null;
-    print('Auth cache cleared');
   }
 
   /// Convert BigInt to bytes (minimal encoding)
@@ -452,13 +484,6 @@ class Eip7702Executor {
     final r = '0x${signature.r.toRadixString(16).padLeft(64, '0')}';
     final s = '0x${signature.s.toRadixString(16).padLeft(64, '0')}';
     
-    print('=== AUTHORIZATION DATA ===');
-    print('Chain ID: ${config.chainId}');
-    print('Code Address: ${config.delegateAddress}');
-    print('Nonce: $nonce');
-    print('v: $v');
-    print('r: $r');
-    print('s: $s');
     
     return {
       'address': config.delegateAddress,
@@ -477,7 +502,6 @@ class Eip7702Executor {
   /// Register wallet with the backend
   Future<Eip7702Result> registerWallet(Uint8List privateKeyBytes) async {
     try {
-      print('\n=== REGISTER WALLET ===');
       
       final headers = await createAuthHeaders(privateKeyBytes);
       final result = await _api.registerWallet(headers);
@@ -490,7 +514,6 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Registration failed');
       }
     } catch (e) {
-      print('Error in registerWallet: $e');
       return Eip7702Result.failure('Registration failed: $e');
     }
   }
@@ -502,9 +525,6 @@ class Eip7702Executor {
     String walletAddress,
   ) async {
     try {
-      print('\n=== ADMIN WHITELIST ===');
-      print('Wallet to whitelist: $walletAddress');
-      print('API Key present: ${secretApiKey.isNotEmpty}');
       
       // Create auth headers with signature
       final authHeaders = await createAuthHeaders(privateKeyBytes);
@@ -515,11 +535,9 @@ class Eip7702Executor {
         'x-api-key': secretApiKey,
       };
       
-      print('Headers: $headers');
       
       final result = await _api.adminWhitelist(walletAddress, headers);
       
-      print('Whitelist result: $result');
       
       if (result['success'] == true) {
         return Eip7702Result.success(data: result);
@@ -527,41 +545,30 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Failed to whitelist wallet');
       }
     } catch (e) {
-      print('Error in adminWhitelist: $e');
       return Eip7702Result.failure('Admin whitelist failed: $e');
     }
   }
 
   /// Register and whitelist in one call
   Future<Eip7702Result> registerAndWhitelist(Uint8List privateKeyBytes, String secretApiKey) async {
-    print('');
-    print('=== REGISTER AND WHITELIST START ===');
-    print('API Key provided: ${secretApiKey.isNotEmpty}');
     
     final registerResult = await registerWallet(privateKeyBytes);
     
-    print('Register result - success: ${registerResult.success}');
-    print('Register result - error: ${registerResult.error}');
-    print('Register result - data: ${registerResult.data}');
     
     // Check if we should continue to whitelist
     final shouldContinue = registerResult.success || 
         (registerResult.error?.toLowerCase().contains('already') == true) ||
         (registerResult.data?['message']?.toString().toLowerCase().contains('already') == true);
     
-    print('Should continue to whitelist: $shouldContinue');
     
     if (!shouldContinue) {
-      print('Stopping - registration failed');
       return registerResult;
     }
     
     final address = getAddressFromPrivateKey(privateKeyBytes);
-    print('Proceeding to whitelist address: $address');
     
     final whitelistResult = await adminWhitelist(privateKeyBytes, secretApiKey, address);
     
-    print('=== REGISTER AND WHITELIST END ===');
     return whitelistResult;
   }
   
@@ -573,32 +580,22 @@ class Eip7702Executor {
       final credentials = EthPrivateKey(privateKeyBytes);
       final walletAddress = _toChecksumAddress(credentials.address.toString().replaceAll('0x', ''));
       
-      print('=== AUTHORIZE DEBUG ===');
-      print('Wallet address (checksummed): $walletAddress');
       
-      int nonce = 0;
+      // The nonce is the replay protection for this signature. Defaulting it
+      // to a fixed, guessable value when the fetch fails defeats exactly the
+      // control it implements, so abort instead: an attacker who can make the
+      // nonce request fail must not be able to steer us into signing at zero.
+      final int nonce;
       try {
-        final nonceResult = await _api.getWalletNonce(headers);
-        print('Nonce result: $nonceResult');
-        if (nonceResult['success'] == true) {
-          final nonceValue = nonceResult['delegationNonce'] ?? nonceResult['nonce'] ?? nonceResult['result'] ?? 0;
-          if (nonceValue is String) {
-            nonce = int.tryParse(nonceValue) ?? 0;
-          } else if (nonceValue is int) {
-            nonce = nonceValue;
-          }
-        }
-        print('Using nonce: $nonce');
+        nonce = _requireNonce(await _api.getWalletNonce(headers));
       } catch (e) {
-        print('Failed to get nonce, using 0: $e');
+        return Eip7702Result.failure(
+          'Could not establish the delegation nonce, so nothing was signed: $e',
+        );
       }
-      
+
       final authData = createAuthorizationData(privateKeyBytes, nonce);
       
-      print('=== SENDING AUTHORIZATION ===');
-      print('Auth: $authData');
-      print('Wallet address: $walletAddress');
-      print('waitForTx: $waitForTx');
       
       final result = await _api.authorizeTransaction(
         authData, 
@@ -607,7 +604,6 @@ class Eip7702Executor {
         waitForTx: waitForTx,
       );
       
-      print('Authorization response: $result');
       
       if (result['success'] == true || result['transaction'] != null) {
         final tx = result['transaction'] as Map<String, dynamic>?;
@@ -620,7 +616,6 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Authorization failed');
       }
     } catch (e) {
-      print('Authorization error: $e');
       return Eip7702Result.failure(e.toString());
     }
   }
@@ -638,7 +633,6 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Failed to get status');
       }
     } catch (e) {
-      print('Error in getWalletStatus: $e');
       return Eip7702Result.failure('Failed to get wallet status: $e');
     }
   }
@@ -654,7 +648,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting balance: $e');
       return BigInt.zero;
     }
   }
@@ -705,14 +698,10 @@ class Eip7702Executor {
     try {
       final headers = await createAuthHeaders(privateKeyBytes);
       
-      final nonceResult = await _api.getWalletNonce(headers);
-      final delegationNonceRaw = nonceResult['delegationNonce'] ?? 0;
-      final delegationNonce = delegationNonceRaw is int 
-          ? delegationNonceRaw 
-          : int.parse(delegationNonceRaw.toString());
+      // See _requireNonce: "the server said 0" and "we got no answer" must not
+      // collapse into the same value on a replay-protection parameter.
+      final delegationNonce = _requireNonce(await _api.getWalletNonce(headers));
       
-      print('=== BATCH GASLESS TRANSACTION ===');
-      print('Delegation Nonce: $delegationNonce');
       
       List<List<dynamic>> callsArray = [];
       String encodedCalls = '';
@@ -728,23 +717,18 @@ class Eip7702Executor {
         encodedCalls += packed.substring(2);
       }
       
-      print('Calls: $callsArray');
-      print('Encoded calls: 0x$encodedCalls');
       
       final digestPreimage = _solidityPacked(
         ['uint256', 'bytes'], 
         [BigInt.from(delegationNonce), '0x$encodedCalls']
       );
-      print('Digest preimage: $digestPreimage');
       
       final digest = _keccak256(_hexToBytes(digestPreimage));
-      print('Digest: ${_bytesToHex(digest)}');
       
       final credentials = EthPrivateKey(privateKeyBytes);
       final signature = credentials.signPersonalMessageToUint8List(digest);
       final signatureHex = '0x${_bytesToHex(signature, include0x: false)}';
       
-      print('Signature: $signatureHex');
       
       final result = await _api.sponsorTransaction(
         callsArray, 
@@ -764,9 +748,64 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Batch transaction failed');
       }
     } catch (e) {
-      print('Batch gasless transaction error: $e');
       return Eip7702Result.failure(e.toString());
     }
+  }
+
+  /// Read a delegation nonce from an API response, or throw.
+  ///
+  /// Distinguishes "the server said 0" from "we did not get an answer". Never
+  /// returns a default: a substituted nonce silently weakens replay
+  /// protection, which is the one thing the nonce exists to provide.
+  int _requireNonce(Map<String, dynamic> response) {
+    if (response['success'] != true) {
+      throw StateError(
+        'nonce request was not successful: '
+        '${response['message'] ?? 'no reason given'}',
+      );
+    }
+
+    final raw = response['delegationNonce'] ?? response['nonce'] ?? response['result'];
+    if (raw == null) {
+      throw StateError('nonce response contained no nonce field');
+    }
+    if (raw is int) return raw;
+
+    final parsed = int.tryParse(raw.toString());
+    if (parsed == null) {
+      throw StateError('nonce response held a non-numeric nonce: $raw');
+    }
+    return parsed;
+  }
+
+  /// Require [value] to be a well-formed 20-byte hex address, returning it
+  /// lower-cased and without the `0x` prefix, ready for ABI encoding.
+  ///
+  /// The encoders below pad with [String.padLeft], which lengthens short input
+  /// but does not truncate long input — so an over-length or non-hex value
+  /// would shift every following 32-byte field and encode a different call
+  /// than the caller asked for. Validating here makes that unrepresentable.
+  /// Exactly 40 hex characters, optionally 0x-prefixed, anchored at both ends.
+  ///
+  /// Deliberately not delegating this to `EthereumAddress.fromHex`: its own
+  /// pattern is `^(0x)?[0-9a-f]{40}` with no end anchor, and the 20-byte length
+  /// check behind it is an `assert`, which is compiled out of release builds.
+  /// An over-length address would therefore survive parsing in production —
+  /// precisely the input this guard exists to reject.
+  static final RegExp _addressPattern =
+      RegExp(r'^(?:0x)?[0-9a-fA-F]{40}$');
+
+  static String _requireAddressHex(String value, String parameterName) {
+    if (!_addressPattern.hasMatch(value)) {
+      throw ArgumentError.value(
+        value,
+        parameterName,
+        'must be a 20-byte hex Ethereum address, optionally 0x-prefixed',
+      );
+    }
+    final withoutPrefix =
+        value.startsWith('0x') || value.startsWith('0X') ? value.substring(2) : value;
+    return withoutPrefix.toLowerCase();
   }
 
   /// Helper: solidityPacked implementation
@@ -778,9 +817,9 @@ class Eip7702Executor {
       final value = values[i];
       
       if (type == 'address') {
-        String addr = value.toString().toLowerCase();
-        if (addr.startsWith('0x')) addr = addr.substring(2);
-        result += addr.padLeft(40, '0');
+        // Validated, not padded: padLeft would silently accept an over-length
+        // address and shift every field that follows it in the preimage.
+        result += _requireAddressHex(value.toString(), 'address');
       } else if (type == 'uint256') {
         BigInt val;
         if (value is BigInt) {
@@ -819,8 +858,9 @@ class Eip7702Executor {
       
       return const DelegationStatus(isDelegated: false);
     } catch (e) {
-      print('Failed to get delegation status: $e');
-      return const DelegationStatus(isDelegated: false);
+      // Not authoritative: the caller must be able to tell this apart from a
+      // confirmed "not delegated". See DelegationStatus.isKnown.
+      return DelegationStatus(isDelegated: false, error: e.toString());
     }
   }
 
@@ -844,7 +884,6 @@ class Eip7702Executor {
       }
       return null;
     } catch (e) {
-      print('RPC error: $e');
       return null;
     }
   }
@@ -858,35 +897,38 @@ class Eip7702Executor {
     try {
       // Check cache first
       if (!forceRefresh && _isGoldPriceCacheValid()) {
-        print('=== USING CACHED GOLD PRICE ===');
         return GoldPriceResult.success(_cachedGoldPrice!);
       }
       
-      print('=== FETCHING GOLD PRICE ===');
       
       final headers = await createAuthHeaders(privateKeyBytes);
       final result = await _api.getGoldPrice(headers);
       
       if (result['success'] == true) {
         final price = _extractGoldPrice(result);
-        print('Gold price per mg: \$${price.toStringAsFixed(6)}');
-        print('Gold price per gram: \$${(price * 1000).toStringAsFixed(2)}');
-        
+
+        // This price converts balances into displayed fiat value and underpins
+        // purchase and redemption decisions, so refuse to price rather than
+        // price wrongly. Refusing degrades the UI; accepting a manipulated
+        // rate can induce a sale at a fraction of true value.
+        final rejection = _rejectImplausiblePrice(price);
+        if (rejection != null) return GoldPriceResult.failure(rejection);
+
         final goldPrice = GoldPrice(
           pricePerMg: price,
           fetchedAt: DateTime.now(),
         );
-        
+
         // Cache the result
         _cachedGoldPrice = goldPrice;
         _goldPriceCacheExpiry = DateTime.now().add(_goldPriceCacheDuration);
-        
+        _lastGoodGoldPrice = goldPrice;
+
         return GoldPriceResult.success(goldPrice);
       } else {
         return GoldPriceResult.failure(result['message'] ?? 'Failed to fetch gold price');
       }
     } catch (e) {
-      print('Error fetching gold price: $e');
       return GoldPriceResult.failure('Failed to fetch gold price: $e');
     }
   }
@@ -900,7 +942,6 @@ class Eip7702Executor {
   void clearGoldPriceCache() {
     _cachedGoldPrice = null;
     _goldPriceCacheExpiry = null;
-    print('Gold price cache cleared');
   }
 
   /// Get cached gold price (returns null if not cached or expired)
@@ -911,45 +952,86 @@ class Eip7702Executor {
     return null;
   }
 
-  /// Extract price from API response
+  /// Coerce one candidate field into a price, or throw.
+  ///
+  /// A malformed numeric string used to fall through to `?? 0.0`, so a
+  /// corrupted or truncated response was read as a valid price of zero. A
+  /// present-but-unreadable field is an error, not a zero.
+  static double _coercePrice(Object? value, String path) {
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      if (parsed == null) {
+        throw FormatException('gold price at "$path" is not numeric');
+      }
+      return parsed;
+    }
+    throw FormatException(
+      'gold price at "$path" had unexpected type ${value.runtimeType}',
+    );
+  }
+
+  /// Extract price from an API response.
+  ///
+  /// Accepts exactly the documented shapes below, in this order, and rejects
+  /// anything else. It does not hunt the payload for the first number it can
+  /// find: a permissive search lets a malformed or partial response be read as
+  /// a valid price.
   double _extractGoldPrice(Map<String, dynamic> data) {
-    // Try different response structures
     if (data.containsKey('price')) {
-      final price = data['price'];
-      if (price is num) return price.toDouble();
-      if (price is String) return double.tryParse(price) ?? 0.0;
+      return _coercePrice(data['price'], 'price');
     }
-    
-    if (data.containsKey('result')) {
-      final result = data['result'];
-      if (result is num) return result.toDouble();
-      if (result is String) return double.tryParse(result) ?? 0.0;
-      if (result is Map) {
-        if (result.containsKey('price')) {
-          final price = result['price'];
-          if (price is num) return price.toDouble();
-          if (price is String) return double.tryParse(price) ?? 0.0;
-        }
-        if (result.containsKey('pricePerMg')) {
-          final price = result['pricePerMg'];
-          if (price is num) return price.toDouble();
-          if (price is String) return double.tryParse(price) ?? 0.0;
-        }
+
+    final result = data['result'];
+    if (result is num || result is String) {
+      return _coercePrice(result, 'result');
+    }
+    if (result is Map) {
+      if (result.containsKey('price')) {
+        return _coercePrice(result['price'], 'result.price');
+      }
+      if (result.containsKey('pricePerMg')) {
+        return _coercePrice(result['pricePerMg'], 'result.pricePerMg');
       }
     }
-    
-    if (data.containsKey('data')) {
-      final d = data['data'];
-      if (d is Map) {
-        if (d.containsKey('price')) {
-          final price = d['price'];
-          if (price is num) return price.toDouble();
-          if (price is String) return double.tryParse(price) ?? 0.0;
-        }
+
+    final nested = data['data'];
+    if (nested is Map && nested.containsKey('price')) {
+      return _coercePrice(nested['price'], 'data.price');
+    }
+
+    throw const FormatException(
+      'gold price response matched none of the expected shapes '
+      '(price | result | result.price | result.pricePerMg | data.price)',
+    );
+  }
+
+  /// Returns a rejection reason for [price], or null if it is acceptable.
+  String? _rejectImplausiblePrice(double price) {
+    if (!price.isFinite) {
+      return 'Quoted gold price was not a finite number.';
+    }
+    if (price <= 0) {
+      return 'Quoted gold price was not positive ($price USD/mg).';
+    }
+    if (price < goldPriceMinUsdPerMg || price > goldPriceMaxUsdPerMg) {
+      return 'Quoted gold price $price USD/mg is outside the plausible band '
+          '[$goldPriceMinUsdPerMg, $goldPriceMaxUsdPerMg].';
+    }
+
+    final last = _lastGoodGoldPrice;
+    final maxMove = goldPriceMaxRelativeMove;
+    if (last != null && maxMove != null && last.pricePerMg > 0) {
+      final move = (price - last.pricePerMg).abs() / last.pricePerMg;
+      if (move > maxMove) {
+        return 'Quoted gold price $price USD/mg moved '
+            '${(move * 100).toStringAsFixed(1)}% from the last validated price '
+            '${last.pricePerMg} USD/mg, beyond the '
+            '${(maxMove * 100).toStringAsFixed(0)}% tolerance.';
       }
     }
-    
-    throw Exception('Unable to extract gold price from response: $data');
+
+    return null;
   }
 
   /// Calculate USD value from token balance string
@@ -1185,7 +1267,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting percentFeeBps: $e');
       return BigInt.zero;
     }
   }
@@ -1206,7 +1287,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting fixedFee: $e');
       return BigInt.zero;
     }
   }
@@ -1248,7 +1328,6 @@ class Eip7702Executor {
       }
       return [BigInt.zero, BigInt.zero];
     } catch (e) {
-      print('Error getting user limit for $userAddress: $e');
       return [BigInt.zero, BigInt.zero];
     }
   }
@@ -1275,7 +1354,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting TxLimitGlobalMin: $e');
       return BigInt.zero;
     }
   }
@@ -1290,7 +1368,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting TxLimitGlobalMax: $e');
       return BigInt.zero;
     }
   }
@@ -1314,7 +1391,6 @@ class Eip7702Executor {
       }
       return {'nonce': 0, 'goldNonce': 0, 'delegationNonce': 0};
     } catch (e) {
-      print('Error getting delegated nonces: $e');
       return {'nonce': 0, 'goldNonce': 0, 'delegationNonce': 0};
     }
   }
@@ -1352,7 +1428,6 @@ class Eip7702Executor {
       }
       return false;
     } catch (e) {
-      print('Error checking role $roleId for $account: $e');
       return false;
     }
   }
@@ -1366,7 +1441,6 @@ class Eip7702Executor {
         final hasRoleResult = await hasRole(privateKeyBytes, roleId, address);
         roles[roleId] = hasRoleResult;
       } catch (e) {
-        print('Error checking role $roleId: $e');
         roles[roleId] = false;
       }
     }
@@ -1467,36 +1541,36 @@ class Eip7702Executor {
 
   String _encodeTransferCall(String to, BigInt amount) {
     const selector = 'a9059cbb';
-    final toParam = to.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
+    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }
 
   String _encodeTransferFromCall(String from, String to, BigInt amount) {
     const selector = '23b872dd';
-    final fromParam = from.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
-    final toParam = to.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
+    final fromParam = _requireAddressHex(from, 'from').padLeft(64, '0');
+    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$fromParam$toParam$amountParam';
   }
 
   String _encodeApproveCall(String spender, BigInt amount) {
     const selector = '095ea7b3';
-    final spenderParam = spender.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
+    final spenderParam = _requireAddressHex(spender, 'spender').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$spenderParam$amountParam';
   }
 
   String _encodeBuyTokenCall(String to, BigInt amount) {
     const selector = '68f8fc10';
-    final toParam = to.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
+    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }
 
   String _encodeSellTokenCall(String to, BigInt amount) {
     const selector = 'f464e7db';
-    final toParam = to.toLowerCase().replaceFirst('0x', '').padLeft(64, '0');
+    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }
@@ -1519,9 +1593,6 @@ class Eip7702Executor {
     BigInt amount, {
     bool waitForTx = false,
   }) async {
-    print('=== TRANSFER ===');
-    print('To: $toAddress');
-    print('Raw amount: $amount');
     
     final data = _encodeTransferCall(toAddress, amount);
     return executeGasless(
@@ -1542,9 +1613,6 @@ class Eip7702Executor {
   }) async {
     final rawAmount = toRawAmount(amount);
     
-    print('=== TRANSFER FORMATTED ===');
-    print('Human amount: $amount');
-    print('Raw amount: $rawAmount');
     
     return transferOroCash(privateKeyBytes, contractAddress, toAddress, rawAmount, waitForTx: waitForTx);
   }
@@ -1588,9 +1656,6 @@ class Eip7702Executor {
     BigInt amount, {
     bool waitForTx = false,
   }) async {
-    print('=== APPROVE ===');
-    print('Spender: $spender');
-    print('Raw amount: $amount');
     
     final data = _encodeApproveCall(spender, amount);
     return executeGasless(
@@ -1611,9 +1676,6 @@ class Eip7702Executor {
   }) async {
     final rawAmount = toRawAmount(amount);
     
-    print('=== APPROVE FORMATTED ===');
-    print('Human amount: $amount');
-    print('Raw amount: $rawAmount');
     
     return approve(privateKeyBytes, contractAddress, spender, rawAmount, waitForTx: waitForTx);
   }
@@ -1729,7 +1791,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting allowance: $e');
       return BigInt.zero;
     }
   }
@@ -1747,9 +1808,6 @@ class Eip7702Executor {
   /// Admin mint tokens
   Future<Eip7702Result> adminMint(String secretApiKey, String toAddress, String amount) async {
     try {
-      print('\n=== ADMIN MINT ===');
-      print('To: $toAddress');
-      print('Amount: $amount');
       
       final headers = {
         'x-api-key': secretApiKey,
@@ -1763,7 +1821,6 @@ class Eip7702Executor {
         return Eip7702Result.failure(result['message'] ?? 'Mint failed');
       }
     } catch (e) {
-      print('Error in adminMint: $e');
       return Eip7702Result.failure('Admin mint failed: $e');
     }
   }
@@ -1773,20 +1830,44 @@ class Eip7702Executor {
   // ============================================
 
   /// Check if address has membership NFT
-  Future<bool> hasMembership(Uint8List privateKeyBytes, String address) async {
+  /// Check membership, distinguishing "no membership" from "could not tell".
+  ///
+  /// Prefer this over [hasMembership] anywhere the answer gates access: a bare
+  /// false cannot be told apart from a lookup failure.
+  Future<MembershipCheck> checkMembership(
+    Uint8List privateKeyBytes,
+    String address,
+  ) async {
     try {
       final headers = await createAuthHeaders(privateKeyBytes);
-      final result = await _api.oroCashRead('hasMembership', headers, params: [address]);
-      if (result['success'] == true) {
-        final value = result['result'];
-        if (value is bool) return value;
-        return value?.toString().toLowerCase() == 'true';
+      final result =
+          await _api.oroCashRead('hasMembership', headers, params: [address]);
+
+      if (result['success'] != true) {
+        return MembershipCheck.unknown(
+          result['message']?.toString() ?? 'membership read was not successful',
+        );
       }
-      return false;
+
+      final value = result['result'];
+      if (value is bool) return MembershipCheck.known(value);
+      if (value == null) {
+        return MembershipCheck.unknown('membership read returned no result');
+      }
+      return MembershipCheck.known(value.toString().toLowerCase() == 'true');
     } catch (e) {
-      print('Error checking membership: $e');
-      return false;
+      return MembershipCheck.unknown(e.toString());
     }
+  }
+
+  /// Whether [address] holds a membership NFT.
+  ///
+  /// Returns false both when there is no membership and when the check could
+  /// not be performed. Use [checkMembership] when that difference matters —
+  /// for anything that grants or withholds access, it does.
+  Future<bool> hasMembership(Uint8List privateKeyBytes, String address) async {
+    final check = await checkMembership(privateKeyBytes, address);
+    return check.hasMembership;
   }
 
   /// Get membership tokenId for address (returns 0 if no membership)
@@ -1799,7 +1880,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting membershipOf: $e');
       return BigInt.zero;
     }
   }
@@ -1814,7 +1894,6 @@ class Eip7702Executor {
       }
       return '';
     } catch (e) {
-      print('Error getting ownerOfMembership: $e');
       return '';
     }
   }
@@ -1829,7 +1908,6 @@ class Eip7702Executor {
       }
       return BigInt.zero;
     } catch (e) {
-      print('Error getting totalMemberships: $e');
       return BigInt.zero;
     }
   }
@@ -1844,7 +1922,6 @@ class Eip7702Executor {
       }
       return 0;
     } catch (e) {
-      print('Error getting nftBalanceOf: $e');
       return 0;
     }
   }
@@ -1884,7 +1961,6 @@ class Eip7702Executor {
       
       return MembershipInfo.empty();
     } catch (e) {
-      print('Error getting membership info: $e');
       return MembershipInfo.empty();
     }
   }
@@ -1899,7 +1975,6 @@ class Eip7702Executor {
       }
       return '';
     } catch (e) {
-      print('Error getting membershipTokenURI: $e');
       return '';
     }
   }
@@ -1914,7 +1989,6 @@ class Eip7702Executor {
       }
       return '';
     } catch (e) {
-      print('Error getting nftBaseURI: $e');
       return '';
     }
   }
@@ -1929,7 +2003,6 @@ class Eip7702Executor {
       }
       return '';
     } catch (e) {
-      print('Error getting nftName: $e');
       return '';
     }
   }
@@ -1944,7 +2017,6 @@ class Eip7702Executor {
       }
       return '';
     } catch (e) {
-      print('Error getting nftSymbol: $e');
       return '';
     }
   }

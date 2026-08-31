@@ -6,6 +6,20 @@ import 'api.dart';
 import 'api_onchainlabs.dart';
 import 'eip7702_executor.dart';
 
+/// Thrown when contract addresses cannot be established during
+/// [WalletManager.initialize].
+///
+/// The SDK does not substitute defaults for these addresses: the delegate
+/// address determines which contract the wallet delegates its account to, so
+/// operating on a guessed value is worse than not operating at all.
+class ContractDiscoveryException implements Exception {
+  final String message;
+  const ContractDiscoveryException(this.message);
+
+  @override
+  String toString() => 'ContractDiscoveryException: $message';
+}
+
 /// Manages wallet operations with secure storage
 class WalletManager {
   final FlutterSecureStorage _storage;
@@ -41,37 +55,40 @@ class WalletManager {
     required String rpcUrl,
     int chainId = 80002,
   }) async {
-    print('=== FETCHING CONTRACT ADDRESSES ===');
-    print('API Base URL: ${_api.baseUrl}');
-    
+    // The delegate address returned here becomes the contract this wallet
+    // signs an EIP-7702 authorisation to — the highest-consequence signature
+    // the SDK produces. A previous version fell back to hard-coded addresses
+    // when this call failed, which turned an unreachable endpoint into a
+    // silent redirection onto a different contract pair. Fail closed instead:
+    // the caller must be able to tell "not configured" from "configured".
+    final Map<String, dynamic> contractsResult;
     try {
-      final contractsResult = await _api.getContracts();
-      print('Contracts result: $contractsResult');
-      
-      if (contractsResult['success'] == true) {
-        _delegateAddress = contractsResult['delegation'] ?? 
-                          contractsResult['delegator'] ?? 
-                          contractsResult['delegateAddress'];
-        _orocashAddress = contractsResult['gold'] ?? contractsResult['orocash'];
-        print('Delegate Address: $_delegateAddress');
-        print('OroCash Address: $_orocashAddress');
-      } else {
-        print('Failed to fetch contracts: ${contractsResult['message']}');
-        _delegateAddress = '0xa7dE21f5Fc304F2d9E012B7FaAa786621173d61C';
-        _orocashAddress = '0x367bCCB56c0661c47d0684777Ccf83C69c119A2B';
-        print('Using default addresses');
-      }
+      contractsResult = await _api.getContracts();
     } catch (e) {
-      print('Error fetching contracts: $e');
-      _delegateAddress = '0xa7dE21f5Fc304F2d9E012B7FaAa786621173d61C';
-      _orocashAddress = '0x367bCCB56c0661c47d0684777Ccf83C69c119A2B';
-      print('Using default addresses');
+      throw ContractDiscoveryException(
+        'Could not reach the contract configuration endpoint at '
+        '${_api.baseUrl}/contracts: $e',
+      );
     }
-    
+
+    if (contractsResult['success'] != true) {
+      throw ContractDiscoveryException(
+        'Contract configuration request was rejected: '
+        '${contractsResult['message'] ?? 'no reason given'}',
+      );
+    }
+
+    _delegateAddress = contractsResult['delegation'] ??
+        contractsResult['delegator'] ??
+        contractsResult['delegateAddress'];
+    _orocashAddress = contractsResult['gold'] ?? contractsResult['orocash'];
+
     if (_delegateAddress == null || _delegateAddress!.isEmpty) {
-      throw Exception('Delegate address is null or empty');
+      throw ContractDiscoveryException(
+        'Contract configuration contained no delegate address.',
+      );
     }
-    
+
     final config = Eip7702Config(
       rpcUrl: rpcUrl,
       delegateAddress: _delegateAddress!,
@@ -82,7 +99,6 @@ class WalletManager {
     // Note: Executor decimals will be initialized when wallet is loaded with privateKeyBytes
     // by calling executor.initialize(privateKeyBytes) from home_page.dart
     
-    print('=== WALLET MANAGER INITIALIZED ===');
   }
 
   /// Get the executor

@@ -1,0 +1,13 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  errors:
+    # A published package must not write to its host application's log stream.
+    # Secret material has reached these calls before (see CHANGELOG 4.1.0), so
+    # this is an error, not a warning: it must fail the build, not scroll past
+    # in a wall of lint output. Use OnchainLabsLog for diagnostics instead.
+    avoid_print: error
+
+linter:
+  rules:
+    - avoid_print

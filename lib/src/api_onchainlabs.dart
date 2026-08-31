@@ -11,23 +11,50 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   
   OnchainLabsApiImpl({required this.baseUrl});
   
+  /// Decode a JSON object response.
+  ///
+  /// Always reports `httpStatusCode`, and sets `transportError: true` when the
+  /// body was not a JSON object at all. Without that flag a 500 page, a
+  /// captive-portal interception or a proxy error is indistinguishable from a
+  /// legitimate `{success: false}` rejection by the API, and callers cannot
+  /// tell a refusal from a compromised or broken channel.
+  ///
+  /// The body is not echoed into the message: it may be an arbitrary
+  /// intercepted page, and it flows into caller error strings.
   Map<String, dynamic> _parseResponse(http.Response response) {
+    final Object? decoded;
     try {
-      return json.decode(response.body) as Map<String, dynamic>;
-    } catch (e) {
+      decoded = json.decode(response.body);
+    } catch (_) {
       return {
         'success': false,
-        'message': 'Failed to parse response: ${response.body}',
+        'transportError': true,
+        'httpStatusCode': response.statusCode,
+        'message': 'Server response was not JSON '
+            '(HTTP ${response.statusCode}, ${response.bodyBytes.length} bytes).',
       };
     }
+
+    if (decoded is! Map<String, dynamic>) {
+      return {
+        'success': false,
+        'transportError': true,
+        'httpStatusCode': response.statusCode,
+        'message': 'Server response was not a JSON object '
+            '(HTTP ${response.statusCode}, got ${decoded.runtimeType}).',
+      };
+    }
+
+    return {
+      'httpStatusCode': response.statusCode,
+      ...decoded,
+    };
   }
 
   @override
   Future<Map<String, dynamic>> getBalance(String address, Map<String, String> headers) async {
     try {
       final url = '$baseUrl/balance/$address';
-      print('=== GET BALANCE ===');
-      print('URL: $url');
       
       final response = await http.get(
         Uri.parse(url),
@@ -35,12 +62,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('getBalance error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -49,9 +73,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> getRandomMessage(String address) async {
     try {
       final url = '$baseUrl/random';
-      print('=== GET RANDOM MESSAGE ===');
-      print('URL: $url');
-      print('Address: $address');
       
       final response = await http.post(
         Uri.parse(url),
@@ -60,12 +81,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('getRandomMessage error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -73,16 +91,13 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   @override
   Future<Map<String, dynamic>> registerWallet(Map<String, String> headers) async {
     try {
-      print('\n=== REGISTER WALLET ===');
       final url = '$baseUrl/register';
-      print('URL: $url');
       
       // Extract message and signature from headers and put in body
       final requestBody = {
         'message': headers['x-message'],
         'signature': headers['x-signature'],
       };
-      print('Request body: $requestBody');
       
       final response = await http.post(
         Uri.parse(url),
@@ -92,11 +107,8 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
         body: json.encode(requestBody),
       );
       
-      print('Status: ${response.statusCode}');
-      print('Response: ${response.body}');
       return _parseResponse(response);
     } catch (e) {
-      print('Error in registerWallet: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -128,8 +140,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
         body: json.encode(body),
       );
       
-      print('Authorize response status: ${response.statusCode}');
-      print('Authorize response body: ${response.body}');
       
       return _parseResponse(response);
     } catch (e) {
@@ -146,11 +156,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   }) async {
     try {
       final url = '$baseUrl/eip7702/sponsor';
-      print('=== SPONSOR TRANSACTION ===');
-      print('URL: $url');
-      print('Calls: $calls');
-      print('Signature: $signature');
-      print('waitForTx: $waitForTx');
       
       final response = await http.post(
         Uri.parse(url),
@@ -163,12 +168,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('sponsorTransaction error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -177,8 +179,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> getWalletStatus(Map<String, String> headers) async {
     try {
       final url = '$baseUrl/status';
-      print('=== GET WALLET STATUS ===');
-      print('URL: $url');
       
       final response = await http.get(
         Uri.parse(url),
@@ -186,12 +186,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('getWalletStatus error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -200,8 +197,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> getWalletNonce(Map<String, String> headers) async {
     try {
       final url = '$baseUrl/nonce';
-      print('=== GET WALLET NONCE ===');
-      print('URL: $url');
       
       final response = await http.get(
         Uri.parse(url),
@@ -209,12 +204,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('getWalletNonce error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -227,10 +219,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   }) async {
     try {
       final url = '$baseUrl/gold/read';
-      print('=== OROCASH READ ===');
-      print('URL: $url');
-      print('Method: $method');
-      print('Params: $params');
       
       final response = await http.post(
         Uri.parse(url),
@@ -242,12 +230,9 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('oroCashRead error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -256,18 +241,12 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> adminMint(
       String toAddress, String amount, Map<String, String> headers) async {
     try {
-      print('\n=== ADMIN MINT ===');
       final url = '$baseUrl/admin/mint';
-      print('URL: $url');
-      print('address: $toAddress');
-      print('amount: $amount');
-      print('Headers: $headers');
       
       final requestBody = {
         'address': toAddress,
         'amount': amount,
       };
-      print('Request body: $requestBody');
       
       final response = await http.post(
         Uri.parse(url),
@@ -278,11 +257,8 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
         body: json.encode(requestBody),
       );
       
-      print('Status: ${response.statusCode}');
-      print('Response: ${response.body}');
       return _parseResponse(response);
     } catch (e) {
-      print('Error in adminMint: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -291,16 +267,11 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> adminWhitelist(
       String walletAddress, Map<String, String> headers) async {
     try {
-      print('\n=== ADMIN WHITELIST ===');
       final url = '$baseUrl/admin/whitelist';
-      print('URL: $url');
-      print('walletAddress: $walletAddress');
-      print('Headers: $headers');
       
       final requestBody = {
         'address': walletAddress,
       };
-      print('Request body: $requestBody');
       
       final response = await http.post(
         Uri.parse(url),
@@ -311,11 +282,8 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
         body: json.encode(requestBody),
       );
       
-      print('Status: ${response.statusCode}');
-      print('Response: ${response.body}');
       return _parseResponse(response);
     } catch (e) {
-      print('Error in adminWhitelist: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -324,18 +292,13 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
   Future<Map<String, dynamic>> getContracts() async {
     try {
       final url = '$baseUrl/contracts';
-      print('=== GET CONTRACTS ===');
-      print('URL: $url');
       
       final response = await http.get(Uri.parse(url));
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       return result;
     } catch (e) {
-      print('getContracts error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }
@@ -344,8 +307,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
     Future<Map<String, dynamic>> getGoldPrice(Map<String, String> headers) async {
     try {
       final url = '$baseUrl/gold/price';
-      print('=== GET GOLD PRICE ===');
-      print('URL: $url');
       
       final response = await http.get(
         Uri.parse(url),
@@ -353,8 +314,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
       );
       final result = _parseResponse(response);
       
-      print('Status: ${response.statusCode}');
-      print('Response: $result');
       
       if (response.statusCode == 200) {
         return {
@@ -368,7 +327,6 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
         };
       }
     } catch (e) {
-      print('getGoldPrice error: $e');
       return {'success': false, 'message': 'Network error: $e'};
     }
   }

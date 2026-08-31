@@ -98,9 +98,25 @@ class DelegatedSigningHelper {
     return sig;
   }
 
+  /// Exactly 40 hex characters, optionally 0x-prefixed, anchored at both ends.
+  static final RegExp _addressPattern = RegExp(r'^(?:0x)?[0-9a-fA-F]{40}$');
+
   /// Helper: Convert Ethereum address to bytes32 (left-padded with zeros)
+  ///
+  /// Validates before decoding. Without the check, an address longer than 20
+  /// bytes decodes to more than 20 bytes and [Uint8List.setRange] writes it
+  /// into the wrong offset — producing a silently incorrect bytes32 for
+  /// lengths up to 32, and a RangeError beyond that. Either way the signed
+  /// struct hash would no longer describe the intended call.
   static Uint8List _addressToBytes32(String address) {
-    // Remove 0x prefix if present
+    if (!_addressPattern.hasMatch(address)) {
+      throw ArgumentError.value(
+        address,
+        'address',
+        'must be a 20-byte hex Ethereum address, optionally 0x-prefixed',
+      );
+    }
+
     String addr = address.toLowerCase();
     if (addr.startsWith('0x')) {
       addr = addr.substring(2);
