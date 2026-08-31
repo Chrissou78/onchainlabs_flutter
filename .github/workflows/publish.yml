@@ -29,6 +29,8 @@ jobs:
   # only starts if this passes, so a tag cannot ship code that fails analysis.
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.already_published.outputs.should_publish }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,8 +54,26 @@ jobs:
             exit 1
           fi
 
+      # pub.dev versions are permanent, so re-publishing one is always an
+      # error there. Detecting it here keeps a re-pushed or moved tag from
+      # producing a red run for something that is not actually wrong.
+      - name: Skip if this version is already on pub.dev
+        id: already_published
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://pub.dev/api/packages/onchainlabs_flutter/versions/$V")
+          echo "pub.dev returned $CODE for version $V"
+          if [ "$CODE" = "200" ]; then
+            echo "::notice::$V is already published on pub.dev — skipping publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
     needs: verify
+    if: needs.verify.outputs.should_publish == 'true'
     permissions:
       id-token: write   # required to mint the OIDC token pub.dev verifies
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1.8.1

@@ -110,3 +110,22 @@ surface (B-04), a required `baseUrl` (T-08), build-then-sign confirmation
 (X-04), `BigInt` amounts end to end (X-07), an injectable `http.Client` for
 certificate pinning (T-02), and explicit secure-storage options with
 user-presence binding (K-03, K-04, R-03).
+
+
+## 4.2.0
+
+No functional changes. Identical library code to 4.1.0.
+
+This release exists to give the 4.1.0 remediation a clean, verifiable
+provenance chain. The commits behind 4.1.0 were rewritten after publication,
+so the commit that release was published from no longer exists and pub.dev's
+link back to its source dead-ends. 4.2.0 is published from the current
+history, so it can be traced back to the code it was built from.
+
+Prefer 4.2.0 over 4.1.0. If you are on 4.1.0 the code you are running is the
+same, and there is no urgency to move.
+
+### CI
+- The publish workflow now checks pub.dev before publishing and skips when the
+  version is already there, so a moved or re-pushed tag no longer fails a run
+  for something that is not wrong.
