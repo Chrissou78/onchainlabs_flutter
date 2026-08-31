@@ -1,0 +1,59 @@
+name: Publish to pub.dev
+
+# Publishing happens here rather than from a developer machine. Smart App
+# Control blocks the Flutter SDK's dart.exe on the maintainer's Windows box,
+# and more generally a release should come from a reproducible checkout rather
+# than whatever happens to be in someone's working tree.
+#
+# Requires one-time setup on pub.dev:
+#   https://pub.dev/packages/onchainlabs_flutter/admin
+#   -> Automated publishing -> Enable publishing from GitHub Actions
+#      Repository:   Chrissou78/onchainlabs_flutter
+#      Tag pattern:  v{{version}}
+#
+# Without that, the OIDC token is rejected and this job fails at the final
+# step. No long-lived credential is stored in the repository.
+#
+# To release: bump `version` in pubspec.yaml, land it on main, then
+#   git tag v4.1.0 && git push origin v4.1.0
+# The tag must match the pubspec version or pub.dev rejects the publish.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # pre-releases, e.g. v5.0.0-beta.1
+
+jobs:
+  # Re-run the full CI gate against the tagged commit. The publish job below
+  # only starts if this passes, so a tag cannot ship code that fails analysis.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Confirm the tag matches the pubspec version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PUBSPEC=$(grep -E '^version:' pubspec.yaml | sed -E 's/^version:[[:space:]]*//')
+          echo "tag=$TAG pubspec=$PUBSPEC"
+          if [ "$TAG" != "$PUBSPEC" ]; then
+            echo "::error::Tag v$TAG does not match pubspec version $PUBSPEC"
+            exit 1
+          fi
+
+  publish:
+    needs: verify
+    permissions:
+      id-token: write   # required to mint the OIDC token pub.dev verifies
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1.8.1
