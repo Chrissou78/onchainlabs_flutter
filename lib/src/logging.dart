@@ -19,21 +19,17 @@ typedef OnchainLabsLogHandler = void Function(String message);
 class OnchainLabsLog {
   OnchainLabsLog._();
 
-  static OnchainLabsLogHandler? _handler;
-
   /// The active log sink, or null (the default) to discard all messages.
-  static OnchainLabsLogHandler? get handler => _handler;
-
-  static set handler(OnchainLabsLogHandler? value) => _handler = value;
+  static OnchainLabsLogHandler? handler;
 
   /// Whether a handler is installed. Guard expensive message construction:
   /// `if (OnchainLabsLog.isEnabled) OnchainLabsLog.log(expensive());`
-  static bool get isEnabled => _handler != null;
+  static bool get isEnabled => handler != null;
 
   /// Emit [message] to the installed handler, after redaction. No-op when no
   /// handler is installed.
   static void log(String message) {
-    final h = _handler;
+    final h = handler;
     if (h == null) return;
     h(redact(message));
   }
@@ -75,10 +71,12 @@ class OnchainLabsLog {
   static String redact(String message) {
     var out = message.replaceAll(_mnemonicPhrase, '<redacted:phrase>');
     out = out.replaceAll(_hexBlob, '<redacted:hex>');
-    out = out.replaceAllMapped(
-      _sensitiveField,
-      (m) => '${m.namedGroup('name')}${m.namedGroup('sep')}<redacted>',
-    );
+    out = out.replaceAllMapped(_sensitiveField, (m) {
+      // replaceAllMapped is typed to Match, but a RegExp always yields a
+      // RegExpMatch — which is where namedGroup lives.
+      final match = m as RegExpMatch;
+      return '${match.namedGroup('name')}${match.namedGroup('sep')}<redacted>';
+    });
     return out;
   }
 }

@@ -1,4 +1,4 @@
-library onchainlabs_flutter;
+// Library name omitted: unnecessary since Dart 2.19 (unnecessary_library_name).
 
 // Diagnostics — opt-in. The SDK logs nothing until a handler is installed.
 export 'src/logging.dart';

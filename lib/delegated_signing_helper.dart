@@ -82,7 +82,7 @@ class DelegatedSigningHelper {
     // For authentication, always treat the message as UTF-8 text
     // Even if it's a hex string like "0x123...", we sign the text itself
     final payload = Uint8List.fromList(utf8.encode(message));
-    final sig = await credentials.signPersonalMessageToUint8List(payload);
+    final sig = credentials.signPersonalMessageToUint8List(payload);
     return sig;
   }
 
@@ -94,7 +94,7 @@ class DelegatedSigningHelper {
     required EthPrivateKey credentials,
   }) async {
     // Sign the struct hash bytes directly (like ethers getBytes + signMessage)
-    final sig = await credentials.signPersonalMessageToUint8List(structHash);
+    final sig = credentials.signPersonalMessageToUint8List(structHash);
     return sig;
   }
 

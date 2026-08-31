@@ -51,7 +51,7 @@ class SimpleOnchainApi {
 
   Future<String> _signPersonal(EthPrivateKey key, String message) async {
     final payload = Uint8List.fromList(utf8.encode(message));
-    final sig = await key.signPersonalMessageToUint8List(payload);
+    final sig = key.signPersonalMessageToUint8List(payload);
     return '0x${HEX.encode(sig)}';
   }
 
