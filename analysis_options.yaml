@@ -1,6 +1,19 @@
 include: package:lints/recommended.yaml
 
 analyzer:
+  # Required verbatim by flutter_tools' AnalysisOptionsMigration, which
+  # otherwise rewrites this file during `flutter pub get` — dirtying the git
+  # tree and tripping `pub publish`'s clean-state check. With all seven
+  # present the migration returns early and leaves the file alone.
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+
   errors:
     # A published package must not write to its host application's log stream.
     # Secret material has reached these calls before (see CHANGELOG 4.1.0), so
