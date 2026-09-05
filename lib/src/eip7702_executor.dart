@@ -319,9 +319,85 @@ class Eip7702Executor {
   bool get isInitialized => _isInitialized;
 
   /// Convert human-readable amount to raw amount (with decimals)
-  BigInt toRawAmount(double humanAmount) {
-    return BigInt.from((humanAmount * _decimalMultiplier.toDouble()).round());
+  /// Parse a decimal amount into base units exactly, using string arithmetic.
+  ///
+  /// This is the correct entry point for any amount that will be signed or
+  /// submitted. It never routes the value through a binary floating-point
+  /// number, so what the user typed, what is signed, and what the ledger
+  /// records all agree exactly.
+  ///
+  /// Throws [FormatException] on malformed input or on more decimal places
+  /// than the token has — silently truncating a user's amount is worse than
+  /// refusing it.
+  BigInt parseAmount(String humanAmount) =>
+      parseAmountWithDecimals(humanAmount, _tokenDecimals);
+
+  /// [parseAmount] with an explicit decimal count, for callers that know the
+  /// token's precision without an initialised executor.
+  static BigInt parseAmountWithDecimals(String humanAmount, int decimals) {
+    final text = humanAmount.trim();
+    if (text.isEmpty) {
+      throw const FormatException('amount is empty');
+    }
+
+    final negative = text.startsWith('-');
+    final unsigned = negative ? text.substring(1) : text;
+
+    final parts = unsigned.split('.');
+    if (parts.length > 2) {
+      throw FormatException('amount has more than one decimal point: $text');
+    }
+
+    final whole = parts[0].isEmpty ? '0' : parts[0];
+    final fraction = parts.length == 2 ? parts[1] : '';
+
+    if (!RegExp(r'^[0-9]+$').hasMatch(whole)) {
+      throw FormatException('amount has a non-numeric whole part: $text');
+    }
+    if (fraction.isNotEmpty && !RegExp(r'^[0-9]+$').hasMatch(fraction)) {
+      throw FormatException('amount has a non-numeric fraction: $text');
+    }
+    if (fraction.length > decimals) {
+      throw FormatException(
+        'amount has ${fraction.length} decimal places but the token has '
+        '$decimals: $text',
+      );
+    }
+
+    final base = BigInt.parse(whole + fraction.padRight(decimals, '0'));
+    return negative ? -base : base;
   }
+
+  /// Convert a double amount to base units.
+  ///
+  /// Routed through [parseAmount] rather than multiplying by the decimal
+  /// multiplier: `humanAmount * 1e6` is evaluated in binary floating point,
+  /// where decimal fractions do not round-trip and `.round()` can land a base
+  /// unit either side of the intended value. Exactness above ~9e15 base units
+  /// is impossible for a double at all.
+  BigInt _rawFromDouble(double humanAmount) {
+    if (!humanAmount.isFinite) {
+      throw FormatException('amount is not a finite number: $humanAmount');
+    }
+    // toString() gives the shortest decimal that round-trips to this double,
+    // which is the closest thing to "what the caller meant" recoverable here.
+    var text = humanAmount.toString();
+    if (text.contains('e') || text.contains('E')) {
+      text = humanAmount.toStringAsFixed(_tokenDecimals);
+    }
+    final dot = text.indexOf('.');
+    if (dot >= 0 && text.length - dot - 1 > _tokenDecimals) {
+      text = humanAmount.toStringAsFixed(_tokenDecimals);
+    }
+    return parseAmount(text);
+  }
+
+  /// Convert human-readable amount to base units.
+  @Deprecated(
+    'Amounts that will be signed should not pass through a double. '
+    'Use parseAmount(String) instead. This will be removed in 5.0.0.',
+  )
+  BigInt toRawAmount(double humanAmount) => _rawFromDouble(humanAmount);
 
   /// Convert raw amount to human-readable amount
   double toHumanAmount(BigInt rawAmount) {
@@ -1643,7 +1719,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     
     
     return transferOroCash(privateKeyBytes, contractAddress, toAddress, rawAmount, waitForTx: waitForTx);
@@ -1676,7 +1752,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     return transferFrom(privateKeyBytes, contractAddress, from, to, rawAmount, waitForTx: waitForTx);
   }
 
@@ -1706,7 +1782,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     
     
     return approve(privateKeyBytes, contractAddress, spender, rawAmount, waitForTx: waitForTx);
@@ -1748,7 +1824,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     return buyToken(privateKeyBytes, contractAddress, to, rawAmount, waitForTx: waitForTx);
   }
 
@@ -1777,7 +1853,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     return sellToken(privateKeyBytes, contractAddress, to, rawAmount, waitForTx: waitForTx);
   }
 
@@ -1804,7 +1880,7 @@ class Eip7702Executor {
     double amount, {
     bool waitForTx = false,
   }) async {
-    final rawAmount = toRawAmount(amount);
+    final rawAmount = _rawFromDouble(amount);
     return disposeToken(privateKeyBytes, contractAddress, rawAmount, waitForTx: waitForTx);
   }
 

@@ -1,5 +1,6 @@
 // lib/src/wallet_manager.dart
 
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api.dart';
@@ -141,6 +142,49 @@ class WalletManager {
       bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
     }
     return Uint8List.fromList(bytes);
+  }
+
+  /// Overwrite [bytes] with zeros.
+  ///
+  /// Only meaningful for a buffer you own and are finished with. It cannot
+  /// reach copies already made elsewhere, and it cannot touch Dart strings at
+  /// all — those are immutable and may persist in the heap until the
+  /// collector reclaims them, which is why key material should be passed and
+  /// held as bytes rather than hex.
+  static void zeroise(Uint8List bytes) {
+    bytes.fillRange(0, bytes.length, 0);
+  }
+
+  /// Run [action] with the private key, then zero the buffer.
+  ///
+  /// Preferred over [getPrivateKey] for one-off operations: the key is read
+  /// inside the operation that needs it and overwritten as soon as that
+  /// operation finishes, rather than living in the heap for the collector to
+  /// reclaim whenever it chooses.
+  ///
+  /// ```dart
+  /// final balance = await manager.withPrivateKey(
+  ///   (key) => manager.executor.getOroCashBalanceFromWallet(key),
+  /// );
+  /// ```
+  ///
+  /// The buffer is zeroed even if [action] throws. Do not retain the
+  /// [Uint8List] beyond the callback — it will be zeros afterwards, and any
+  /// copy you make of it is outside this guarantee.
+  ///
+  /// This narrows exposure; it does not eliminate it. Anything the key is
+  /// passed to may copy it, and the structural remedy is a hardware-backed
+  /// key where the raw bytes never enter the process at all.
+  Future<T> withPrivateKey<T>(FutureOr<T> Function(Uint8List key) action) async {
+    final key = await getPrivateKey();
+    if (key == null) {
+      throw StateError('No private key is stored for this wallet.');
+    }
+    try {
+      return await action(key);
+    } finally {
+      zeroise(key);
+    }
   }
 
   /// Clear wallet data
