@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/digests/keccak.dart';
 import 'package:web3dart/web3dart.dart';
 import 'api.dart';
+import 'siwe_challenge.dart';
 
 /// Keccak256 hash helper
 Uint8List _keccak256(Uint8List data) {
@@ -263,6 +264,17 @@ class Eip7702Executor {
   /// newly quoted price can be sanity-checked against it.
   GoldPrice? _lastGoodGoldPrice;
 
+  /// Domain the `/random` sign-in challenge must declare, or null to skip the
+  /// check (the default).
+  ///
+  /// Domain binding is what stops a challenge minted for one origin being
+  /// replayed at another, so setting this is the stronger posture. It is off
+  /// by default because a deployment whose SIWE domain differs from the host
+  /// the SDK actually calls would fail every login the moment this is
+  /// enforced. Confirm the two agree in every environment you target, then
+  /// set it.
+  String? expectedSiweDomain;
+
   /// Absolute plausibility band for the price of 1mg of gold, in USD.
   ///
   /// Deliberately wide — this rejects a corrupted, zeroed or wildly
@@ -395,10 +407,23 @@ class Eip7702Executor {
     }
     
     final signMessageStr = randomResult['signMessage'] as String;
-    
+
+    // Never sign a server-supplied blob unexamined. Authentication and
+    // transaction signing share one primitive here (EIP-191 personal_sign), so
+    // an unchecked challenge is a signing oracle: a malicious or intercepted
+    // response can return a transaction digest and harvest a signature valid
+    // for it. Throws ChallengeRejected on anything that is not a current,
+    // well-formed sign-in message addressed to this wallet.
+    final challenge = SiweChallenge.validate(
+      signMessageStr,
+      expectedAddress: address,
+      expectedChainId: config.chainId,
+      expectedDomain: expectedSiweDomain,
+    );
+
     // Sign the message
     final signature = signMessage(privateKeyBytes, signMessageStr);
-    
+
     // Cache the headers
     _cachedAuthHeaders = {
       'x-message': signMessageStr,
@@ -406,7 +431,14 @@ class Eip7702Executor {
       'x-address': address,
     };
     _cachedAddress = address;
-    _cacheExpiry = DateTime.now().add(_cacheDuration);
+    // Never outlive the challenge itself. The old fixed four-hour window could
+    // keep replaying a triple the server had already stopped honouring, and
+    // conversely kept it alive far longer than a login handshake needs.
+    final serverExpiry = challenge.expirationTime?.toLocal();
+    final localExpiry = DateTime.now().add(_cacheDuration);
+    _cacheExpiry = (serverExpiry != null && serverExpiry.isBefore(localExpiry))
+        ? serverExpiry
+        : localExpiry;
     
     
     return _cachedAuthHeaders!;

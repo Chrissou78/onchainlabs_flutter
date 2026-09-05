@@ -8,14 +8,24 @@ import 'package:hex/hex.dart';
 import 'package:pointycastle/digests/keccak.dart';
 
 import 'src/models.dart'; // PolygonWallet / WalletManager types (your package structure)
+import 'src/siwe_challenge.dart';
 
 class SimpleOnchainApi {
   final String baseUrl;
   final String publicKey;
 
+  /// Chain the sign-in challenge must be bound to, or null to skip the check.
+  final int? chainId;
+
+  /// Domain the sign-in challenge must declare, or null to skip the check.
+  /// See [SiweChallenge.validate] for why this defaults to off.
+  final String? expectedSiweDomain;
+
   SimpleOnchainApi({
     required this.publicKey,
     this.baseUrl = 'https://ga-api-dev.onchainlabs.ch',
+    this.chainId,
+    this.expectedSiweDomain,
   });
 
   Exception _err(String path, http.Response resp) {
@@ -57,6 +67,17 @@ class SimpleOnchainApi {
 
   Future<Map<String, String>> _authHeaders(PolygonWallet w) async {
     final challenge = await _getRandom(w.address);
+
+    // Refuse to sign anything that is not a current, well-formed sign-in
+    // message for this wallet. The same primitive signs transaction digests,
+    // so an unexamined server-supplied payload is a signing oracle.
+    SiweChallenge.validate(
+      challenge,
+      expectedAddress: w.address,
+      expectedChainId: chainId,
+      expectedDomain: expectedSiweDomain,
+    );
+
     final creds = EthPrivateKey.fromHex(w.privateKeyHex);
     final signature = await _signPersonal(creds, challenge);
 

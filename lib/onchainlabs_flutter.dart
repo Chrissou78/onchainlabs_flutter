@@ -3,6 +3,9 @@
 // Diagnostics — opt-in. The SDK logs nothing until a handler is installed.
 export 'src/logging.dart';
 
+// Sign-in challenge validation (EIP-4361)
+export 'src/siwe_challenge.dart';
+
 // API
 export 'src/api.dart';
 export 'src/api_onchainlabs.dart';
