@@ -129,3 +129,56 @@ same, and there is no urgency to move.
 - The publish workflow now checks pub.dev before publishing and skips when the
   version is already there, so a moved or re-pushed tag no longer fails a run
   for something that is not wrong.
+
+
+## 4.3.0
+
+Continues the remediation from the Gens Aurea audit. Non-breaking: no public
+signature was removed, and deprecated members still work.
+
+### Security
+- **The sign-in challenge is validated before it is signed** (X-01). The API
+  now issues EIP-4361 challenges; the SDK now refuses to sign anything that is
+  not a current, well-formed sign-in message addressed to this wallet on the
+  configured chain. Bare hex is rejected outright, which is the decisive check:
+  a transaction digest never parses as a sign-in message. Applied to both
+  `/random` consumers. Rejection throws `ChallengeRejected`.
+  Domain binding is available via `expectedSiweDomain` and defaults to off —
+  enabling it where the challenge domain differs from the host being called
+  would fail every login.
+- **Auth headers no longer outlive the challenge** (partial T-04). The cache is
+  bounded by the challenge's own `Expiration Time` instead of a fixed four
+  hours.
+- **`BatchCallBuilder.addTransfer` validates its addresses** (X-06). It had the
+  same unguarded `padLeft` as the encoders fixed in 4.1.0, on a money path.
+  Negative amounts are rejected.
+
+### Added
+- `Eip7702Executor.parseAmount(String)` and `parseAmountWithDecimals` — exact
+  decimal parsing into base units via string arithmetic (X-07). Over-precise
+  input throws rather than truncating silently.
+- `WalletManager.withPrivateKey(action)` runs an operation and zeroes the key
+  buffer afterwards, including on throw (R-03). `WalletManager.zeroise` is
+  exposed for caller-owned buffers.
+- `Eip7702Executor.requireAddressHex` is now public, for callers encoding
+  their own calldata.
+- `PolygonWallet` is exported. It is a required parameter of
+  `SimpleOnchainApi.mint` and friends, and was previously impossible to name
+  from outside the package.
+
+### Changed
+- `toRawAmount(double)` is deprecated and will be removed in 5.0.0. It no
+  longer multiplies through binary floating point — it routes through the
+  exact path, so the `*Formatted` write methods that call it are fixed too.
+- The README has been rewritten. It previously contained a single unclosed
+  code fence, so the whole document rendered as one code block, and it
+  documented several methods that do not exist (`api.balanceOf`, a `mint`
+  signature that was never valid, a two-argument
+  `getOroCashBalanceFormatted`). It also demonstrated logging private keys and
+  mnemonics — the exact pattern the audit rates Critical.
+
+### Tests
+First test coverage in the package (D-02): 28 cases across sign-in challenge
+validation and amount parsing, using challenges captured verbatim from the
+live API so a server-side format change fails a test rather than silently
+breaking every login.

@@ -903,7 +903,7 @@ class Eip7702Executor {
   static final RegExp _addressPattern =
       RegExp(r'^(?:0x)?[0-9a-fA-F]{40}$');
 
-  static String _requireAddressHex(String value, String parameterName) {
+  static String requireAddressHex(String value, [String parameterName = 'address']) {
     if (!_addressPattern.hasMatch(value)) {
       throw ArgumentError.value(
         value,
@@ -927,7 +927,7 @@ class Eip7702Executor {
       if (type == 'address') {
         // Validated, not padded: padLeft would silently accept an over-length
         // address and shift every field that follows it in the preimage.
-        result += _requireAddressHex(value.toString(), 'address');
+        result += requireAddressHex(value.toString(), 'address');
       } else if (type == 'uint256') {
         BigInt val;
         if (value is BigInt) {
@@ -1649,36 +1649,36 @@ class Eip7702Executor {
 
   String _encodeTransferCall(String to, BigInt amount) {
     const selector = 'a9059cbb';
-    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
+    final toParam = requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }
 
   String _encodeTransferFromCall(String from, String to, BigInt amount) {
     const selector = '23b872dd';
-    final fromParam = _requireAddressHex(from, 'from').padLeft(64, '0');
-    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
+    final fromParam = requireAddressHex(from, 'from').padLeft(64, '0');
+    final toParam = requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$fromParam$toParam$amountParam';
   }
 
   String _encodeApproveCall(String spender, BigInt amount) {
     const selector = '095ea7b3';
-    final spenderParam = _requireAddressHex(spender, 'spender').padLeft(64, '0');
+    final spenderParam = requireAddressHex(spender, 'spender').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$spenderParam$amountParam';
   }
 
   String _encodeBuyTokenCall(String to, BigInt amount) {
     const selector = '68f8fc10';
-    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
+    final toParam = requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }
 
   String _encodeSellTokenCall(String to, BigInt amount) {
     const selector = 'f464e7db';
-    final toParam = _requireAddressHex(to, 'to').padLeft(64, '0');
+    final toParam = requireAddressHex(to, 'to').padLeft(64, '0');
     final amountParam = amount.toRadixString(16).padLeft(64, '0');
     return '0x$selector$toParam$amountParam';
   }

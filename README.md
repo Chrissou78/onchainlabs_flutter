@@ -2,144 +2,136 @@
 
 Polygon EVM wallet helper for Flutter mobile apps.
 
-Goal: give you a simple way to:
-
 - create a Polygon-compatible wallet (address + private key + mnemonic)
-- sign a backend challenge
-- register the wallet with `https://api-ga.onchainlabs.ch`
-- store the mnemonic locally on the device
-- mint tokens
-- Get token balance
+- authenticate against the OnchainLabs API with a signed sign-in challenge
+- read and move OROCASH tokens, including gasless transfers via EIP-7702
+- read gold prices, contract state, fees, limits, roles and NFT membership
 
-> Security note  
-> Do not use this as your only security layer for large amounts of funds.  
-> Always audit code, review storage, and consider hardware wallets for serious use.
+The wallet is an ordinary Ethereum wallet, so the address works on Polygon.
 
+---
 
-## What it does
+## Security posture
 
-- **Wallet creation** (local, offline): generates a BIP39 mnemonic (12 words by default), derives a private key with BIP32 path `m/44'/60'/0'/0/0`, and builds an EVM address using `web3dart`. The private key and address are stored in `FlutterSecureStorage`. The mnemonic is returned to you but **not persisted by the library** — you are responsible for storing it securely if needed.
-- **Backend registration** (separate step): authenticates the wallet with `https://api-ga.onchainlabs.ch` by calling `POST /random` to obtain a challenge, signing it (personal sign), then calling `POST /register`. Optionally whitelists via `POST /admin/whitelist`.
-- **Token operations**: mint, transfer, buy, sell, burn, approve, and read balances and contract state.
-- **EIP-7702 gasless transactions**: users don't need MATIC/POL to transact.
+Read this before shipping. It is short and it matters.
 
+**Key material lives on the device.** The private key is held in
+`FlutterSecureStorage` with platform defaults. It is not hardware-backed, not
+bound to user presence, and not excluded from OS backups. If you are holding
+value on it, add those controls at the app level.
 
-The wallet is a normal Ethereum wallet, so the address type works on Polygon.
+**Never log key material.** The SDK writes nothing to your log stream by
+default — see [Diagnostics](#diagnostics). Do not undo that by printing wallets,
+mnemonics or private keys yourself. A recovery phrase cannot be rotated.
+
+**Transaction signing has known limitations in 4.x.** The signed payload does
+not carry a chain ID or verifying contract, and the batch encoding is not
+injective. If you operate on more than one chain, or rely on the SDK's batch
+path for high-value transfers, understand those limits first. See
+[Known limitations](#known-limitations).
+
+**Use certificate pinning.** The SDK has none. Prefer OS-level pinning
+(`NSPinnedDomains` on iOS, `network_security_config.xml` on Android) so it
+covers every client in your app.
 
 ---
 
 ## Install
 
-In your app `pubspec.yaml`:
-
 ```yaml
 dependencies:
-  Onchainlabs_flutter: ^3.2.0
+  onchainlabs_flutter: ^4.3.0
+```
 
-Code Examples : 
+```dart
+import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+```
 
-### 1. Generate a wallet (create + store locally)
+Requires Dart `>=3.6.0 <4.0.0` and Flutter `>=3.10.0`.
 
+---
+
+## Environments
+
+| Environment | Base URL |
+|---|---|
+| Production | `https://api-ga.onchainlabs.ch` |
+| Development | `https://ga-api-dev.onchainlabs.ch` |
+
+**API keys are environment-specific.** A development key returns
+`401 The provided API key is invalid.` against production, and the reverse.
+Pair each key with its matching host.
+
+`SimpleOnchainApi` defaults to the **development** host. Pass `baseUrl`
+explicitly in production rather than relying on the default:
+
+```dart
+final api = SimpleOnchainApi(
+  publicKey: publicKey,
+  baseUrl: 'https://api-ga.onchainlabs.ch',
+);
+```
+
+`WalletManager` has no default — the base URL is a required argument.
+
+---
+
+## Quick start
+
+```dart
+import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
+
+final walletManager = await WalletManager.createAmoy(
+  'https://ga-api-dev.onchainlabs.ch',
+);
+
+// Runs the operation with the key, then zeroes the buffer.
+final balance = await walletManager.withPrivateKey(
+  (key) => walletManager.executor.getOroCashBalanceFromWallet(key),
+);
+
+print('Balance: ${walletManager.executor.formatAmount(balance)}');
+```
+
+---
+
+## Wallets
+
+### 1. Create a wallet
+
+```dart
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 import 'package:bip39_plus/bip39_plus.dart' as bip39;
 import 'package:bip32_plus/bip32_plus.dart' as bip32;
 
-Future<void> createWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-  // Generate mnemonic and derive private key
+Future<String> createWallet(WalletManager walletManager) async {
   final mnemonic = bip39.generateMnemonic();
   final seed = bip39.mnemonicToSeed(mnemonic);
   final root = bip32.BIP32.fromSeed(seed);
   final child = root.derivePath("m/44'/60'/0'/0/0");
   final privateKeyBytes = child.privateKey!;
 
-  // Get address
   final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
 
-  // Save to secure storage
   await walletManager.savePrivateKey(privateKeyBytes);
   await walletManager.saveAddress(address);
 
-  print('Address: $address');
-  print('Private key (hex): 0x${privateKeyBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
-  print('Mnemonic: $mnemonic');
+  // Show the mnemonic to the user once, require confirmation, then discard it.
+  // Do NOT log it and do NOT persist it alongside the key.
+  return mnemonic;
 }
+```
 
-### 2. Authenticate a wallet (sign random message and send to backend)
+The mnemonic is returned to you and **not persisted by the library**. Storing
+it is your decision; if you do, put it behind the same protection as the key.
 
-You can authenticate either:
+### 2. Restore from a mnemonic
 
-- the current in-memory wallet, or  
-- the wallet restored from secure storage.
-
-#### 2.1 Auth the current wallet
-
-import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
-import 'dart:typed_data';
-
-Future<void> authCurrentWalletExample(Uint8List privateKeyBytes) async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-  const apiKey = 'your-api-key';
-
-  final result = await walletManager.executor.registerAndWhitelist(
-    privateKeyBytes,
-    apiKey,
-  );
-
-  if (result.success) {
-    print('Backend authenticated address: ${walletManager.executor.getAddressFromPrivateKey(privateKeyBytes)}');
-  } else {
-    print('Error: ${result.error}');
-  }
-}
-
-#### 2.2 Auth the stored wallet (from secure storage)
-
-import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
-
-Future<void> authStoredWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-
-  if (privateKeyBytes == null) {
-    print('No wallet found in storage');
-    return;
-  }
-
-  const apiKey = 'your-api-key';
-
-  final result = await walletManager.executor.registerAndWhitelist(
-    privateKeyBytes,
-    apiKey,
-  );
-
-  if (result.success) {
-    print('Backend authenticated stored wallet: ${await walletManager.getAddress()}');
-  } else {
-    print('Error: ${result.error}');
-  }
-}
-
-### 3. Restore a wallet from a mnemonic phrase
-
-Use this when the user already has a recovery phrase and you want to:
-
-- rebuild the wallet (address + private key)  
-- register it with the backend  
-- store the mnemonic in secure storage  
-
-import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
-import 'package:bip39_plus/bip39_plus.dart' as bip39;
-import 'package:bip32_plus/bip32_plus.dart' as bip32;
-
-Future<void> restoreWalletFromMnemonicExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-  const userMnemonic =
-      'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
-
+```dart
+Future<void> restoreFromMnemonic(
+  WalletManager walletManager,
+  String userMnemonic,
+) async {
   final seed = bip39.mnemonicToSeed(userMnemonic);
   final root = bip32.BIP32.fromSeed(seed);
   final child = root.derivePath("m/44'/60'/0'/0/0");
@@ -149,545 +141,513 @@ Future<void> restoreWalletFromMnemonicExample() async {
 
   await walletManager.savePrivateKey(privateKeyBytes);
   await walletManager.saveAddress(address);
-
-  print('Restored wallet address: $address');
-  print('Restored private key (hex): 0x${privateKeyBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
 }
+```
 
-### 4. Restore a wallet from a private key
+### 3. Restore from a private key
 
-Use this if the user owns a **raw EVM private key** (64-hex string) and needs to:
-
-- rebuild the wallet  
-- authenticate it with your backend  
-- store it securely  
-
-import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
-import 'package:hex/hex.dart';
+```dart
 import 'dart:typed_data';
+import 'package:hex/hex.dart';
 
-Future<void> restoreWalletFromPrivateKeyExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-  const userPrivateKey =
-      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-
-  final privateKeyBytes = Uint8List.fromList(HEX.decode(userPrivateKey));
+Future<void> restoreFromPrivateKey(
+  WalletManager walletManager,
+  String userPrivateKeyHex, // 64 hex chars, no 0x
+) async {
+  final privateKeyBytes = Uint8List.fromList(HEX.decode(userPrivateKeyHex));
   final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
 
   await walletManager.savePrivateKey(privateKeyBytes);
   await walletManager.saveAddress(address);
-
-  print('Restored wallet address: $address');
 }
+```
 
-### 5. Mint tokens and ask token balance using an API public Key
+### 4. Register and whitelist
 
-import 'package:onchainlabs_flutter/simple_onchain_api.dart';
-
-/// Set your public key (store securely in production)
-const publicKey = 'your-public-api-key';
-
-final api = SimpleOnchainApi(publicKey: publicKey);
-
-### 5.1 Convert Human amount (base units 6 decimals)
-String toBaseUnits(String human, {int decimals = 6}) {
-  if (!human.contains('.')) {
-    return human + '0' * decimals;
-  }
-  final parts = human.split('.');
-  final whole = parts[0];
-  var frac = parts[1];
-  if (frac.length > decimals) {
-    throw Exception('Too many decimals');
-  }
-  frac = frac.padRight(decimals, '0');
-  return whole + frac;
-}
-
-### 5.2 Mint Tokens Full API mode
-Future<void> mintExample(String walletAddress) async {
-  final api = SimpleOnchainApi(publicKey: publicKey);
-
-  final amount = toBaseUnits("1000"); // → "1000000000"
-
-  final res = await api.mint(
-    address: walletAddress,
-    amount: amount,
-    waitForTx: true,
+```dart
+Future<void> register(WalletManager walletManager, String apiKey) async {
+  final result = await walletManager.withPrivateKey(
+    (key) => walletManager.executor.registerAndWhitelist(key, apiKey),
   );
 
-  print('Mint result: $res');
-}
-
-### 5.3 Get Token Balance
-Method A - Simple API (recommended for most cases):
-
-Future<void> balanceExample(String walletAddress) async {
-  final api = SimpleOnchainApi(publicKey: publicKey);
-
-  final res = await api.balanceOf(walletAddress);
-
-  print('Balance: $res');
-}
-
-Method B - Via WalletManager with signature (for authenticated requests):
-
-CopyFuture<void> balanceExampleAuthenticated() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final address = await walletManager.getAddress();
-
-  final balance = await walletManager.getOroCashBalanceFormatted(privateKeyBytes!, address!);
-
-  print('Balance: $balance');
-}
-
-EIP-7702 Gasless Transactions
-The SDK now supports EIP-7702 for gasless transactions. Users don't need MATIC/POL to transact.
-
-### 6. Initialize the Wallet Manager
-import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
-
-// For Polygon Amoy Testnet
-final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-// For Polygon Mainnet
-final walletManager = await WalletManager.createMainnet('https://api-ga.onchainlabs.ch');
-
-### 7. Create a Wallet with EIP-7702 Support
-import 'package:bip39_plus/bip39_plus.dart' as bip39;
-import 'package:bip32_plus/bip32_plus.dart' as bip32;
-
-Future<void> createWalletV3Example() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-
-  // Generate mnemonic and derive private key
-  final mnemonic = bip39.generateMnemonic();
-  final seed = bip39.mnemonicToSeed(mnemonic);
-  final root = bip32.BIP32.fromSeed(seed);
-  final child = root.derivePath("m/44'/60'/0'/0/0");
-  final privateKeyBytes = child.privateKey!;
-
-  // Get address
-  final address = walletManager.executor.getAddressFromPrivateKey(privateKeyBytes);
-
-  // Initialize executor (caches token decimals)
-  await walletManager.executor.initialize(privateKeyBytes);
-
-  // Save to secure storage
-  await walletManager.savePrivateKey(privateKeyBytes);
-  await walletManager.saveAddress(address);
-
-  print('Address: $address');
-  print('Mnemonic: $mnemonic');
-}
-
-### 8. Register and Whitelist a Wallet
-Future<void> registerWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-
-  const secretApiKey = 'your-admin-api-key';
-
-  final result = await walletManager.executor.registerAndWhitelist(
-    privateKeyBytes!,
-    secretApiKey,
-  );
-
-  if (result.success) {
-    print('Wallet registered and whitelisted!');
-  } else {
-    print('Error: ${result.error}');
+  if (!result.success) {
+    print('Registration failed: ${result.error}');
   }
 }
+```
 
-### 9. Authorize for EIP-7702 (Enable Gasless)
-Future<void> authorizeWalletExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
+> `registerAndWhitelist` takes a privileged API key. See
+> [Admin operations](#admin-operations) before shipping it in an app.
 
-  final result = await walletManager.executor.authorize(
-    privateKeyBytes!,
-    waitForTx: true,
-  );
+---
 
-  if (result.success) {
-    print('Wallet authorized for gasless transactions!');
-  }
+## Key handling
 
-  // Check delegation status
-  final status = await walletManager.executor.getDelegationStatus(privateKeyBytes);
-  print('Is delegated: ${status.isDelegated}');
-}
+`withPrivateKey` reads the key, runs your operation, and zeroes the buffer
+afterwards — including if the operation throws. Prefer it over `getPrivateKey`
+for one-off work.
 
-### 10. Transfer Tokens (Gasless)
-Future<void> transferExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final contractAddress = walletManager.orocashAddress!;
+```dart
+final status = await walletManager.withPrivateKey(
+  (key) => walletManager.executor.getDelegationStatus(key),
+);
+```
 
-  // Transfer 100.5 tokens (human-readable amount)
-  final result = await walletManager.executor.transferOroCashFormatted(
-    privateKeyBytes!,
-    contractAddress,
-    '0xRecipientAddress',
-    100.5,
-    waitForTx: true,
-  );
+Do not retain the buffer past the callback: it will be zeros. If you hold your
+own copy, clear it yourself:
 
-  if (result.success) {
-    print('Transfer successful! TX: ${result.txHash}');
-  } else {
-    print('Transfer failed: ${result.error}');
-  }
-}
+```dart
+WalletManager.zeroise(myKeyBuffer);
+```
 
-### 11. Buy, Sell, and Burn Tokens (Gasless)
-Future<void> tokenOperationsExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final contractAddress = walletManager.orocashAddress!;
-  final executor = walletManager.executor;
+This narrows exposure rather than eliminating it. Anything the key is passed to
+may copy it, and Dart strings cannot be zeroed at all.
 
-  // Buy tokens
-  await executor.buyTokenFormatted(
-    privateKeyBytes!,
-    contractAddress,
-    '0xRecipientAddress',
-    50.0,
-    waitForTx: true,
-  );
+Clear everything on logout:
 
-  // Sell tokens
-  await executor.sellTokenFormatted(
-    privateKeyBytes,
-    contractAddress,
-    '0xRecipientAddress',
-    25.0,
-    waitForTx: true,
-  );
+```dart
+await walletManager.deleteWallet(); // deletes the key and clears the auth cache
+```
 
-  // Burn (dispose) tokens
-  await executor.disposeTokenFormatted(
-    privateKeyBytes,
-    contractAddress,
-    10.0,
-    waitForTx: true,
-  );
-}
+---
 
-### 12. Approve Spender (Gasless)
-Future<void> approveExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final contractAddress = walletManager.orocashAddress!;
+## Amounts
 
-  // Approve specific amount
-  await walletManager.executor.approveFormatted(
-    privateKeyBytes!,
-    contractAddress,
-    '0xSpenderAddress',
-    1000.0,
-    waitForTx: true,
-  );
+Token amounts are integers in base units. **Parse decimal input as a string**,
+never through a `double`:
 
-  // Or approve unlimited
-  await walletManager.executor.approveUnlimited(
-    privateKeyBytes,
-    contractAddress,
-    '0xSpenderAddress',
-    waitForTx: true,
-  );
-}
-
-### 13. Batch Transactions (Gasless)
-Execute multiple operations in a single transaction:
-Future<void> batchTransferExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final contractAddress = walletManager.orocashAddress!;
-  final executor = walletManager.executor;
-
-  final builder = BatchCallBuilder()
-    .addTransfer(
-      contractAddress: contractAddress,
-      to: '0xAddress1',
-      amount: executor.toRawAmount(100.0),
-    )
-    .addTransfer(
-      contractAddress: contractAddress,
-      to: '0xAddress2',
-      amount: executor.toRawAmount(50.0),
-    );
-
-  final result = await executor.executeBatch(
-    privateKeyBytes!,
-    builder,
-    waitForTx: true,
-  );
-
-  print('Batch TX: ${result.txHash}');
-}
-
-### 14. Read Token Information
-Future<void> tokenInfoExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-
-  final name = await executor.getTokenName(privateKeyBytes!);
-  final symbol = await executor.getTokenSymbol(privateKeyBytes);
-  final decimals = await executor.getTokenDecimals(privateKeyBytes);
-  final totalSupply = await executor.getTotalSupply(privateKeyBytes);
-
-  print('Token: $name ($symbol)');
-  print('Decimals: $decimals');
-  print('Total Supply: ${executor.formatAmount(totalSupply)}');
-}
-
-### 15. Read Contract State
-Future<void> contractStateExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-
-  final isPaused = await executor.isPaused(privateKeyBytes!);
-  final hasFee = await executor.hasFee(privateKeyBytes);
-  final custodyEnabled = await executor.isCustodyEnabled(privateKeyBytes);
-
-  print('Paused: $isPaused');
-  print('Has Fee: $hasFee');
-  print('Custody Enabled: $custodyEnabled');
-}
-
-### 16. Read Fees (Basis Points)
-Future<void> feesExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-
-  // Percent fee (100 bps = 1%)
-  final percentFeeBps = await executor.getPercentFeeBps(privateKeyBytes!);
-  final percentFeePercent = await executor.getPercentFeePercent(privateKeyBytes);
-
-  // Fixed fee
-  final fixedFee = await executor.getFixedFee(privateKeyBytes);
-  final fixedFeeFormatted = await executor.getFixedFeeFormatted(privateKeyBytes);
-
-  print('Percent Fee: $percentFeePercent%');
-  print('Fixed Fee: $fixedFeeFormatted tokens');
-}
-
-### 17. Read Transaction Limits
-Future<void> limitsExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-  final address = executor.getAddressFromPrivateKey(privateKeyBytes!);
-
-  // Global limits
-  final globalMin = await executor.getTxLimitGlobalMin(privateKeyBytes);
-  final globalMax = await executor.getTxLimitGlobalMax(privateKeyBytes);
-
-  // User-specific limits
-  final userLimits = await executor.getUserLimit(privateKeyBytes, address);
-
-  print('Global Limits: ${executor.formatAmount(globalMin)} - ${executor.formatAmount(globalMax)}');
-  print('User Limits: ${executor.formatAmount(userLimits[0])} - ${executor.formatAmount(userLimits[1])}');
-}
-
-### 18. Check User Roles
-Future<void> rolesExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-  final address = executor.getAddressFromPrivateKey(privateKeyBytes!);
-
-  // Check specific role
-  final isAdmin = await executor.hasRole(privateKeyBytes, 0, address);
-  final isMinter = await executor.hasRole(privateKeyBytes, 2, address);
-
-  print('Is Admin: $isAdmin');
-  print('Is Minter: $isMinter');
-
-  // Get all roles
-  final roles = await executor.getUserRoles(privateKeyBytes, address);
-  for (final entry in roles.entries) {
-    final roleName = Eip7702Executor.getRoleName(entry.key);
-    print('$roleName: ${entry.value}');
-  }
-}
-
-// Role IDs:
-// 0 = Admin
-// 1 = Moderator
-// 2 = Minter
-// 3 = Extractor
-// 4 = CFO
-// 5 = Whitelist
-
-### 19. OROCASH token = 1mg of gold
-Future<void> goldPriceExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-
-  // Fetch gold price (cached for 5 minutes)
-  final priceResult = await executor.getGoldPrice(privateKeyBytes!);
-
-  if (priceResult.success) {
-    final price = priceResult.price!;
-    print('Price per mg: ${price.formattedPricePerMg}');
-    print('Price per gram: ${price.formattedPricePerGram}');
-    print('Price per troy oz: ${price.formattedPricePerOunce}');
-  }
-
-  // Get balance with USD value
-  const publicApiKey = 'your-public-api-key';
-  final address = executor.getAddressFromPrivateKey(privateKeyBytes);
-
-  final balanceInfo = await executor.getBalanceWithUsdValue(
-    privateKeyBytes,
-    address,
-    publicApiKey,
-  );
-
-  print('Balance: ${balanceInfo['balance']}');
-  print('USD Value: ${balanceInfo['formattedUsdValue']}');
-}
-
-### 20. NFT Membership
-The Orocash contract includes a soulbound NFT membership system.
-
-Future<void> nftMembershipExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-  final executor = walletManager.executor;
-
-  // Check if wallet has membership
-  final hasMembership = await executor.walletHasMembership(privateKeyBytes!);
-  print('Has Membership: $hasMembership');
-
-  // Get full membership info
-  final membershipInfo = await executor.getWalletMembershipInfo(privateKeyBytes);
-
-  if (membershipInfo.isMember) {
-    print('Token ID: ${membershipInfo.tokenId}');
-    print('Minted At: ${membershipInfo.formattedMintedAt}');
-    print('Token URI: ${membershipInfo.tokenURI}');
-  }
-
-  // Get NFT collection info
-  final nftName = await executor.getNftName(privateKeyBytes);
-  final nftSymbol = await executor.getNftSymbol(privateKeyBytes);
-  final totalMemberships = await executor.totalMemberships(privateKeyBytes);
-
-  print('NFT: $nftName ($nftSymbol)');
-  print('Total Minted: $totalMemberships');
-}
-
-### 21. Get All Contract Info
-Fetch all contract information in a single call:
-
-Future<void> allInfoExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
-
-  final allInfo = await walletManager.executor.getAllContractInfo(privateKeyBytes!);
-
-  print('Token: ${allInfo['name']} (${allInfo['symbol']})');
-  print('Balance: ${allInfo['balance']}');
-  print('Is Paused: ${allInfo['isPaused']}');
-  print('Has Fee: ${allInfo['hasFee']}');
-  print('Percent Fee: ${allInfo['percentFeePercent']}%');
-  print('Fixed Fee: ${allInfo['fixedFee']}');
-  print('Roles: ${allInfo['roles']}');
-  print('Membership: ${allInfo['membership']}');
-  print('Gold Price: ${allInfo['goldPrice']}');
-}
-
-### 22. Amount Conversion Utilities
+```dart
 final executor = walletManager.executor;
 
-// Human-readable to raw (with decimals)
-final rawAmount = executor.toRawAmount(100.5);
-print('100.5 tokens = $rawAmount raw');  // 100500000
+final raw = executor.parseAmount('100.5');       // exact
+final text = executor.formatAmount(raw);         // "100.5"
+```
 
-// Raw to human-readable
-final humanAmount = executor.toHumanAmount(BigInt.from(100500000));
-print('100500000 raw = $humanAmount tokens');  // 100.5
+`parseAmount` throws `FormatException` on malformed input, or on more decimal
+places than the token has, rather than silently truncating the user's amount.
 
-// Format raw amount as string
-final formatted = executor.formatAmount(BigInt.from(100500000));
-print('Formatted: $formatted');  // "100.5"
+If you know the precision without an initialised executor:
 
-### 23. Admin Operations
-Future<void> adminExample() async {
-  final walletManager = await WalletManager.createAmoy('https://api-ga.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
+```dart
+final raw = Eip7702Executor.parseAmountWithDecimals('100.5', 6);
+```
 
-  const secretApiKey = 'your-secret-api-key';
+> **Deprecated:** `toRawAmount(double)` is deprecated and will be removed in
+> 5.0.0. Binary floating point cannot represent most decimal fractions exactly,
+> and above roughly 9×10¹⁵ base units it cannot represent the value at all.
+> `toHumanAmount` returns a `double` and is for display only — never feed its
+> result back into a transaction.
 
-  // Mint tokens
-  final mintResult = await walletManager.executor.adminMint(
-    secretApiKey,
+---
+
+## API access without a wallet
+
+`SimpleOnchainApi` covers the endpoints that need only a public API key.
+
+```dart
+final api = SimpleOnchainApi(
+  publicKey: publicKey,
+  baseUrl: 'https://api-ga.onchainlabs.ch',
+);
+
+final res = await api.balanceOfPublic(walletAddress);
+// {address: 0x..., balance: "1000000", success: true}
+```
+
+Write operations need a wallet to sign with:
+
+```dart
+final wallet = PolygonWallet(
+  address: address,
+  privateKeyHex: privateKeyHex,
+  mnemonic: mnemonic,
+);
+
+final res = await api.mint(
+  signerWallet: wallet,
+  contractAddress: contractAddress,
+  receiver: walletAddress,
+  amountHuman: '1000',   // decimal string, converted exactly
+  waitForTx: true,
+);
+```
+
+`transfer`, `transferFrom`, `buyToken`, `sellToken`, `approve` and
+`checkAccount` follow the same shape.
+
+---
+
+## EIP-7702 gasless transactions
+
+Users do not need MATIC/POL to transact.
+
+### 5. Initialise
+
+```dart
+// Polygon Amoy testnet
+final walletManager = await WalletManager.createAmoy(baseUrl);
+
+// Polygon mainnet
+final walletManager = await WalletManager.createMainnet(baseUrl);
+```
+
+Contract addresses are fetched from the API during initialisation. If that
+fails, `initialize` throws `ContractDiscoveryException` rather than falling
+back to defaults — the delegate address determines which contract your wallet
+delegates to, so operating on a guess is worse than not operating.
+
+```dart
+try {
+  final walletManager = await WalletManager.createAmoy(baseUrl);
+} on ContractDiscoveryException catch (e) {
+  // Configuration unavailable. Do not proceed.
+}
+```
+
+### 6. Authorize (enable gasless)
+
+```dart
+final result = await walletManager.withPrivateKey(
+  (key) => walletManager.executor.authorize(key, waitForTx: true),
+);
+
+final status = await walletManager.withPrivateKey(
+  (key) => walletManager.executor.getDelegationStatus(key),
+);
+
+if (status.isKnown) {
+  print('Delegated: ${status.isDelegated}');
+} else {
+  print('Could not determine delegation: ${status.error}');
+}
+```
+
+`isDelegated == false` alone is ambiguous — it is also what a failed lookup
+returns. Check `isKnown` before treating it as authoritative.
+
+### 7. Transfer
+
+```dart
+final executor = walletManager.executor;
+final contractAddress = walletManager.orocashAddress!;
+
+final result = await walletManager.withPrivateKey(
+  (key) => executor.transferOroCash(
+    key,
+    contractAddress,
     '0xRecipientAddress',
-    '1000',
+    executor.parseAmount('100.5'),
+    waitForTx: true,
+  ),
+);
+
+if (result.success) {
+  print('TX: ${result.txHash}');
+}
+```
+
+### 8. Buy, sell, burn
+
+```dart
+await executor.buyToken(key, contractAddress, recipient, executor.parseAmount('50'));
+await executor.sellToken(key, contractAddress, recipient, executor.parseAmount('25'));
+await executor.disposeToken(key, contractAddress, executor.parseAmount('10'));
+```
+
+### 9. Approve
+
+```dart
+await executor.approve(
+  key,
+  contractAddress,
+  '0xSpenderAddress',
+  executor.parseAmount('1000'),
+);
+
+await executor.approveUnlimited(key, contractAddress, '0xSpenderAddress');
+```
+
+### 10. Batch
+
+```dart
+final builder = BatchCallBuilder()
+  .addTransfer(
+    contractAddress: contractAddress,
+    to: '0xAddress1',
+    amount: executor.parseAmount('100'),
+  )
+  .addTransfer(
+    contractAddress: contractAddress,
+    to: '0xAddress2',
+    amount: executor.parseAmount('50'),
   );
 
-  // Whitelist address
-  final whitelistResult = await walletManager.executor.adminWhitelist(
-    privateKeyBytes!,
-    secretApiKey,
-    '0xWalletToWhitelist',
-  );
+final result = await executor.executeBatch(key, builder, waitForTx: true);
+```
+
+> See [Known limitations](#known-limitations) on batch encoding before using
+> this for high-value transfers.
+
+---
+
+## Reads
+
+### 11. Token information
+
+```dart
+final name = await executor.getTokenName(key);
+final symbol = await executor.getTokenSymbol(key);
+final decimals = await executor.getTokenDecimals(key);
+final totalSupply = await executor.getTotalSupply(key);
+
+print('$name ($symbol), ${executor.formatAmount(totalSupply)}');
+```
+
+### 12. Contract state, fees and limits
+
+```dart
+final isPaused = await executor.isPaused(key);
+final hasFee = await executor.hasFee(key);
+final custodyEnabled = await executor.isCustodyEnabled(key);
+
+// 100 bps = 1%
+final percentFeeBps = await executor.getPercentFeeBps(key);
+final fixedFee = await executor.getFixedFee(key);
+
+final globalMin = await executor.getTxLimitGlobalMin(key);
+final globalMax = await executor.getTxLimitGlobalMax(key);
+final userLimits = await executor.getUserLimit(key, address);
+```
+
+### 13. Roles
+
+```dart
+final isAdmin = await executor.hasRole(key, 0, address);
+final roles = await executor.getUserRoles(key, address);
+
+for (final entry in roles.entries) {
+  print('${Eip7702Executor.getRoleName(entry.key)}: ${entry.value}');
 }
+```
 
-### 24. Check Wallet Status (Registration, Whitelist, Delegation)
-Use the /status endpoint to check if a wallet is registered, whitelisted, and delegated. No API key required - only wallet signature.
+| ID | Role | ID | Role |
+|---|---|---|---|
+| 0 | Admin | 3 | Extractor |
+| 1 | Moderator | 4 | CFO |
+| 2 | Minter | 5 | Whitelist |
 
-# Check if wallet is registered
+### 14. Gold price
 
-CopyFuture<void> checkWalletRegistration() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api-dev.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
+One OROCASH represents 1mg of gold.
 
-  final result = await walletManager.executor.getWalletStatus(privateKeyBytes!);
+```dart
+final priceResult = await executor.getGoldPrice(key);
 
-  if (result.success) {
-    // Wallet IS registered
-    print('Wallet is registered!');
-  } else if (result.error?.contains('Wallet not found') == true) {
-    // Wallet is NOT registered
-    print('Wallet is NOT registered - call registerWallet() first');
-  } else {
-    print('Error: ${result.error}');
-  }
+if (priceResult.success) {
+  final price = priceResult.price!;
+  print('Per mg:   ${price.formattedPricePerMg}');
+  print('Per gram: ${price.formattedPricePerGram}');
 }
+```
 
-# Get full wallet status
+Quotes are validated before use: a price must be finite, positive, inside
+`goldPriceMinUsdPerMg`/`goldPriceMaxUsdPerMg`, and within
+`goldPriceMaxRelativeMove` of the last accepted price. Otherwise the SDK
+refuses to price rather than pricing wrongly. Tune the bands for your own risk
+appetite:
 
-CopyFuture<void> getFullWalletStatus() async {
-  final walletManager = await WalletManager.createAmoy('https://ga-api-dev.onchainlabs.ch');
-  final privateKeyBytes = await walletManager.getPrivateKey();
+```dart
+executor.goldPriceMinUsdPerMg = 0.005;
+executor.goldPriceMaxUsdPerMg = 1.0;
+executor.goldPriceMaxRelativeMove = 0.5; // or null to disable
+```
 
-  final result = await walletManager.executor.getWalletStatus(privateKeyBytes!);
+These are a sanity check, not a market-data control. Without certificate
+pinning, an interception still sets the price a user sees within those bands.
 
-  if (result.success) {
-    final data = result.data!;
-    print('Registered: true');
-    print('Whitelisted: ${data['whitelisted']}');
-    print('Delegated: ${data['delegated']}');
-    print('Roles: ${data['roles']}');
-  } else {
-    print('Error: ${result.error}');
-  }
+### 15. NFT membership
+
+```dart
+final check = await executor.checkMembership(key, address);
+
+if (!check.isKnown) {
+  print('Could not verify membership: ${check.error}');
+} else if (check.hasMembership) {
+  final info = await executor.getWalletMembershipInfo(key);
+  print('Token ID: ${info.tokenId}, minted ${info.formattedMintedAt}');
 }
+```
 
-# Status response
-Field	        Type	  Description
-whitelisted	  bool	  Wallet has Whitelist role (can transact)
-delegated	    bool	  EIP-7702 delegation is active (gasless enabled)
-roles	        List	  Array of role IDs assigned to wallet
+Prefer `checkMembership` over `hasMembership` anywhere the answer gates
+access: `hasMembership` returns `false` both for "no membership" and for
+"the check failed".
 
+### 16. Everything at once
+
+```dart
+final allInfo = await executor.getAllContractInfo(key);
+```
+
+### 17. Wallet status
+
+```dart
+final result = await executor.getWalletStatus(key);
+
+if (result.success) {
+  final data = result.data!;
+  print('Whitelisted: ${data['whitelisted']}');
+  print('Delegated: ${data['delegated']}');
+} else if (result.error?.contains('Wallet not found') == true) {
+  print('Not registered — call registerAndWhitelist first');
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `whitelisted` | `bool` | Wallet has the Whitelist role and can transact |
+| `delegated` | `bool` | EIP-7702 delegation is active (gasless enabled) |
+| `roles` | `List` | Role IDs assigned to the wallet |
+
+---
+
+## Sign-in challenge validation
+
+The SDK authenticates by signing an EIP-4361 (Sign-In with Ethereum) challenge
+from `POST /random`. Because authentication and transaction signing share the
+same primitive, a challenge is validated before it is signed: it must parse as
+a current, well-formed sign-in message addressed to this wallet, on the
+configured chain. Opaque payloads — a transaction digest, for instance — are
+rejected outright.
+
+Rejection throws `ChallengeRejected`:
+
+```dart
+try {
+  final headers = await executor.createAuthHeaders(key);
+} on ChallengeRejected catch (e) {
+  // The server did not return a challenge we are willing to sign.
+  print(e.reason);
+}
+```
+
+**Domain binding is opt-in.** Setting it is the stronger posture, but it will
+fail every login if the challenge's domain differs from the host you call, so
+confirm they agree in each environment first:
+
+```dart
+executor.expectedSiweDomain = 'api-ga.onchainlabs.ch';
+```
+
+`SimpleOnchainApi` takes the same settings at construction:
+
+```dart
+final api = SimpleOnchainApi(
+  publicKey: publicKey,
+  baseUrl: 'https://api-ga.onchainlabs.ch',
+  chainId: 137,
+  expectedSiweDomain: 'api-ga.onchainlabs.ch',
+);
+```
+
+---
+
+## Diagnostics
+
+The SDK writes **nothing** to your log stream unless you ask it to.
+
+```dart
+OnchainLabsLog.handler = (message) => debugPrint('[onchainlabs] $message');
+```
+
+Messages pass through a redactor that masks API keys, signatures, bearer
+tokens, private keys and BIP-39 phrases. Treat that as a backstop, not a
+licence: never pass secret material to a log call.
+
+Disable again by setting `handler` to `null`.
+
+---
+
+## Error handling
+
+| Type | Raised when |
+|---|---|
+| `ContractDiscoveryException` | Contract addresses could not be established at initialisation |
+| `ChallengeRejected` | The sign-in challenge was not something the SDK will sign |
+| `FormatException` | An amount was malformed or too precise for the token |
+| `ArgumentError` | An address was not 20 bytes of hex |
+
+API responses carry `httpStatusCode`, and set `transportError: true` when the
+body was not a JSON object at all — a proxy error page or a captive portal,
+rather than a genuine rejection by the API:
+
+```dart
+if (result['transportError'] == true) {
+  // Do not treat this as an authoritative "no".
+}
+```
+
+---
+
+## Admin operations
+
+`adminMint`, `adminWhitelist` and `registerAndWhitelist` take a privileged API
+key.
+
+> **Do not ship an admin key in a mobile app.** Anything in the binary is
+> extractable, and rotating a leaked key does not help when the replacement
+> ships the same way. Have your backend perform privileged operations in
+> response to an authenticated user action instead.
+>
+> This surface is scheduled for removal in 5.0.0.
+
+```dart
+final result = await walletManager.executor.adminMint(
+  secretApiKey,
+  '0xRecipientAddress',
+  '1000',
+);
+```
+
+---
+
+## Migrating from 3.x
+
+| Change | Action |
+|---|---|
+| API hostnames changed | `ga-api` → `api-ga`, `dev-ga-api` → `ga-api-dev` |
+| SDK no longer prints anything | Set `OnchainLabsLog.handler` if you relied on its output |
+| `PolygonWallet.toString()` returns the address only | Read fields directly if you need them |
+| Contract discovery fails closed | Handle `ContractDiscoveryException` |
+| Challenges are validated | Handle `ChallengeRejected` |
+| `toRawAmount(double)` deprecated | Use `parseAmount(String)` |
+| Nonce fetch failures abort | Signing no longer proceeds at nonce 0 |
+| Addresses are validated | Malformed addresses now throw instead of encoding wrongly |
+
+No public signature was removed in 4.x. Deprecated members still work.
+
+---
+
+## Known limitations
+
+Carried from the 2026 security review; scheduled for 5.0.0.
+
+- **No domain separation between signing contexts.** Authentication and
+  transaction signing use the same EIP-191 primitive. Challenge validation
+  closes the practical path, but EIP-712 typed signing is the real fix.
+- **Signed payloads omit chain ID and verifying contract.** A signature is
+  valid on any chain and against any deployment of the same scheme.
+- **Batch encoding is not injective.** Variable-length call data is
+  concatenated without length prefixes, so distinct batches can produce the
+  same digest.
+- **No certificate pinning**, and no way to inject your own `http.Client`.
+- **No confirmation binding.** Nothing ties what a user approves on screen to
+  the bytes that get signed.
+- **Secure storage uses platform defaults** — not hardware-backed, no
+  user-presence requirement, not excluded from OS backups.
+- **The admin surface exists on the client.** See above.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

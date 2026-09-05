@@ -6,6 +6,10 @@ export 'src/logging.dart';
 // Sign-in challenge validation (EIP-4361)
 export 'src/siwe_challenge.dart';
 
+// Types used across the public API. PolygonWallet is a required parameter of
+// SimpleOnchainApi.mint and friends, so callers must be able to name it.
+export 'src/models.dart';
+
 // API
 export 'src/api.dart';
 export 'src/api_onchainlabs.dart';
