@@ -71,6 +71,42 @@ class WalletManager {
   })  : _storage = storage,
         _api = api;
 
+  /// Keychain accessibility the SDK uses for its own key material.
+  ///
+  /// The plugin default is `unlocked` (`kSecAttrAccessibleWhenUnlocked`),
+  /// which is eligible for encrypted iTunes and iCloud backups and migrates
+  /// to a restored device. `first_unlock_this_device` stays on the device it
+  /// was written on. Closes the iOS half of audit finding K-03.
+  ///
+  /// Safe on upgrade: reads do not filter on this attribute, so keys already
+  /// stored remain readable. It applies to writes, and iOS does not permit
+  /// changing it via update — so an existing key keeps the weaker attribute
+  /// until it is written again.
+  static const IOSOptions defaultIosOptions = IOSOptions(
+    accessibility: KeychainAccessibility.first_unlock_this_device,
+  );
+
+  /// Android storage options the SDK uses for its own key material.
+  ///
+  /// Deliberately the plugin default. The Android half of K-03 wants
+  /// `encryptedSharedPreferences: true`, but that selects a different backing
+  /// store, and the plugin requires the same setting on **every**
+  /// `FlutterSecureStorage` in the process. A library cannot flip it
+  /// unilaterally without risking mixed-usage errors and unreadable data in
+  /// the host application, which keeps its own instances.
+  ///
+  /// Enable it from the app, passing the same options here and everywhere you
+  /// construct storage yourself, and plan a migration for data already
+  /// written:
+  ///
+  /// ```dart
+  /// await WalletManager.createAmoy(
+  ///   baseUrl,
+  ///   androidOptions: const AndroidOptions(encryptedSharedPreferences: true),
+  /// );
+  /// ```
+  static const AndroidOptions defaultAndroidOptions = AndroidOptions();
+
   /// Create a new WalletManager instance
   static Future<WalletManager> create({
     required String baseUrl,
@@ -78,8 +114,13 @@ class WalletManager {
     int chainId = 80002,
     String? delegateAddress,
     String? tokenAddress,
+    IOSOptions iosOptions = defaultIosOptions,
+    AndroidOptions androidOptions = defaultAndroidOptions,
   }) async {
-    final storage = const FlutterSecureStorage();
+    final storage = FlutterSecureStorage(
+      iOptions: iosOptions,
+      aOptions: androidOptions,
+    );
     final api = OnchainLabsApiImpl(baseUrl: baseUrl);
 
     final manager = WalletManager._(storage: storage, api: api);
@@ -306,6 +347,8 @@ class WalletManager {
     String baseUrl, {
     String? delegateAddress,
     String? tokenAddress,
+    IOSOptions iosOptions = defaultIosOptions,
+    AndroidOptions androidOptions = defaultAndroidOptions,
   }) {
     return WalletManager.create(
       baseUrl: baseUrl,
@@ -313,6 +356,8 @@ class WalletManager {
       chainId: 137,
       delegateAddress: delegateAddress,
       tokenAddress: tokenAddress,
+      iosOptions: iosOptions,
+      androidOptions: androidOptions,
     );
   }
 
@@ -321,6 +366,8 @@ class WalletManager {
     String baseUrl, {
     String? delegateAddress,
     String? tokenAddress,
+    IOSOptions iosOptions = defaultIosOptions,
+    AndroidOptions androidOptions = defaultAndroidOptions,
   }) {
     return WalletManager.create(
       baseUrl: baseUrl,
@@ -328,6 +375,8 @@ class WalletManager {
       chainId: 80002,
       delegateAddress: delegateAddress,
       tokenAddress: tokenAddress,
+      iosOptions: iosOptions,
+      androidOptions: androidOptions,
     );
   }
 }

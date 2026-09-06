@@ -267,3 +267,35 @@ routed off them so the deprecation produces no warnings inside the package.
   number of unclearable copies, and the structural remedy is still a
   hardware-backed key where the raw bytes never enter the process — 5.0.0,
   with K-03 and K-04.
+
+## 4.6.0
+
+### Security
+- **iOS Keychain accessibility is no longer the plugin default** (K-03, iOS
+  half). The SDK's own storage now uses
+  `KeychainAccessibility.first_unlock_this_device` instead of `unlocked`, so
+  key material is no longer eligible for encrypted iTunes and iCloud backups
+  and does not migrate to a restored device.
+
+  Safe on upgrade: the iOS plugin's `read` does not filter on this attribute,
+  so keys already stored stay readable. It applies to writes, and iOS does not
+  allow changing it via update — an existing key keeps the weaker attribute
+  until it is written again.
+
+### Added
+- `create`, `createAmoy` and `createMainnet` accept `iosOptions` and
+  `androidOptions`, exposed as `WalletManager.defaultIosOptions` and
+  `defaultAndroidOptions`.
+
+### Deliberately not changed
+- **Android still uses the plugin default**, not
+  `encryptedSharedPreferences: true`. The Android half of K-03 asks for it,
+  but that selects a different backing store and the plugin requires the same
+  setting on *every* `FlutterSecureStorage` in the process. A library that
+  flipped it unilaterally would risk mixed-usage errors and unreadable data in
+  the host application, which keeps its own instances.
+
+  Enable it from the app, passing the same options to `WalletManager` and to
+  every instance you construct yourself, and plan a migration for data already
+  written. K-03 is marked `OWNER Both` in the audit for exactly this reason:
+  the SDK supplies the knob, the application decides when to turn it.
