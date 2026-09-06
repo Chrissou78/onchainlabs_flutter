@@ -457,7 +457,14 @@ for (final entry in roles.entries) {
 | 1 | Moderator | 4 | CFO |
 | 2 | Minter | 5 | Whitelist |
 
-### 14. Gold price
+### 14. Gold price — deprecated
+
+> **Deprecated in 4.5.0, removed in 5.0.0.** This path has no known consumer,
+> and it returns **USD per milligram** — not directly usable by a product
+> priced in euros, since the SDK supplies no FX rate. If you price a
+> value-bearing action, take a server-issued quote carrying a signature you
+> verify, rather than having a client read a bare number off an endpoint.
+> `getBalanceWithUsdValue` is deprecated with it.
 
 One OROCASH represents 1mg of gold.
 

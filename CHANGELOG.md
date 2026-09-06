@@ -220,3 +220,30 @@ breaking every login.
 ### Tests
 Seven vectors pinning the address table, including that the two chains never
 share an address and that the T-11 paymaster EOA is absent.
+
+
+## 4.5.0
+
+### Deprecated
+- **The gold-price surface** — `getGoldPrice`, `getBalanceWithUsdValue`, and
+  by extension `GoldPrice`, `GoldPriceResult` and the `goldPrice*` tuning
+  fields. Removal in 5.0.0.
+
+  It has no known consumer. The Gens Aurea application takes a EUR-per-gram
+  price from its own backend and never calls this path, and a USD-per-milligram
+  figure is not directly usable by a product priced in euros without an FX rate
+  the SDK does not supply.
+
+  This also settles audit finding B-06 by removing the thing rather than
+  hardening it further. The bounds and drift check added in 4.1.0 remain in
+  place until the surface goes, so nothing regresses in the meantime — but they
+  were never protecting the price customers actually see, which comes from a
+  different backend with no validation of its own.
+
+  If you price a value-bearing action, the right shape is a server-issued quote
+  carrying a signature the client verifies, with a short expiry. A client
+  reading a bare number off an endpoint cannot tell a real price from one an
+  interception chose.
+
+Nothing was removed. Deprecated members still work, and internal callers were
+routed off them so the deprecation produces no warnings inside the package.

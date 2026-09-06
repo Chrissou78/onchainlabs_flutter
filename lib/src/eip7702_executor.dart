@@ -1001,7 +1001,29 @@ class Eip7702Executor {
   // ============================================
 
   /// Fetch gold price (price of 1mg of gold in USD = price of 1 OROCASH token)
-  Future<GoldPriceResult> getGoldPrice(Uint8List privateKeyBytes, {bool forceRefresh = false}) async {
+  /// Fetch the OnchainLabs gold price.
+  ///
+  /// This is the price of 1mg of gold in **USD**. The Gens Aurea application
+  /// does not use it — it takes a EUR-per-gram price from its own backend —
+  /// so this path has no consumer, and a USD/mg figure is not directly usable
+  /// by a product priced in euros without an FX rate the SDK does not supply.
+  ///
+  /// Deprecated in 4.5.0 and scheduled for removal in 5.0.0, together with
+  /// [GoldPrice], [GoldPriceResult], [getBalanceWithUsdValue] and the
+  /// `goldPrice*` tuning fields. If you price value-bearing actions, take a
+  /// server-issued quote with a signature you verify, rather than a client
+  /// reading a bare number.
+  @Deprecated(
+    'Unused by any known integrator and USD-denominated. Take a signed '
+    'server-issued quote instead. Removed in 5.0.0.',
+  )
+  Future<GoldPriceResult> getGoldPrice(
+    Uint8List privateKeyBytes, {
+    bool forceRefresh = false,
+  }) =>
+      _goldPrice(privateKeyBytes, forceRefresh: forceRefresh);
+
+  Future<GoldPriceResult> _goldPrice(Uint8List privateKeyBytes, {bool forceRefresh = false}) async {
     try {
       // Check cache first
       if (!forceRefresh && _isGoldPriceCacheValid()) {
@@ -1171,6 +1193,9 @@ class Eip7702Executor {
   }
 
   /// Get balance with USD value (convenience method)
+  @Deprecated(
+    'Depends on the deprecated gold-price path. Removed in 5.0.0.',
+  )
   Future<Map<String, dynamic>> getBalanceWithUsdValue(
     Uint8List privateKeyBytes,
     String address,
@@ -1178,7 +1203,7 @@ class Eip7702Executor {
   ) async {
     try {
       final balance = await getOroCashBalanceFormattedWithApiKey(address, apiKey);
-      final priceResult = await getGoldPrice(privateKeyBytes);
+      final priceResult = await _goldPrice(privateKeyBytes);
       
       if (priceResult.success && priceResult.price != null) {
         final usdValue = calculateTokenUsdValue(balance, priceResult.price!.pricePerMg);
@@ -1604,7 +1629,7 @@ class Eip7702Executor {
     
     // Gold price
     try {
-      final goldPriceResult = await getGoldPrice(privateKeyBytes);
+      final goldPriceResult = await _goldPrice(privateKeyBytes);
       if (goldPriceResult.success && goldPriceResult.price != null) {
         results['goldPrice'] = goldPriceResult.price;
         final balance = results['balance'] as BigInt?;
