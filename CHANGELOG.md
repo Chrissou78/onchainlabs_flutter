@@ -247,3 +247,23 @@ share an address and that the T-11 paymaster EOA is absent.
 
 Nothing was removed. Deprecated members still work, and internal callers were
 routed off them so the deprecation produces no warnings inside the package.
+
+### Changed — R-03, partial
+- `savePrivateKey` and `getPrivateKey` no longer scatter key material across
+  immutable strings. Saving allocated one two-character string per byte plus
+  the joined result — 33 copies for a 32-byte key, none of which can be
+  overwritten. Reading called `substring` per byte, leaving 32 more, and built
+  a growable list that reallocated before being copied again. Both now work
+  through a pre-sized byte buffer that is zeroed afterwards.
+
+  The encoding is byte-identical to the previous implementation, verified
+  across all 256 byte values, so keys already in storage decode unchanged.
+  Malformed stored hex now raises `FormatException` instead of failing
+  obscurely mid-parse.
+
+  One string still reaches the platform, because `flutter_secure_storage`
+  takes a string and Dart cannot zero one. R-03 therefore remains partially
+  remediated: `withPrivateKey` bounds the buffer's lifetime, this bounds the
+  number of unclearable copies, and the structural remedy is still a
+  hardware-backed key where the raw bytes never enter the process — 5.0.0,
+  with K-03 and K-04.

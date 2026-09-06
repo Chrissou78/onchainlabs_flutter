@@ -168,21 +168,66 @@ class WalletManager {
   }
 
   /// Save private key
+  static const _hexDigits = '0123456789abcdef';
+
+  /// Hex digit to value, or -1.
+  static int _hexValue(int codeUnit) {
+    if (codeUnit >= 0x30 && codeUnit <= 0x39) return codeUnit - 0x30; // 0-9
+    if (codeUnit >= 0x61 && codeUnit <= 0x66) return codeUnit - 0x57; // a-f
+    if (codeUnit >= 0x41 && codeUnit <= 0x46) return codeUnit - 0x37; // A-F
+    return -1;
+  }
+
+  /// Save private key
+  ///
+  /// Encodes through a byte buffer that is zeroed afterwards, rather than
+  /// `map().join()`. The old form allocated one immutable two-character
+  /// string per byte plus the joined result — 33 copies of key material for a
+  /// 32-byte key, none of which can be overwritten, all of them resident
+  /// until the collector chooses otherwise. One string still reaches storage
+  /// because the platform API takes a string; the other 32 no longer exist.
   Future<void> savePrivateKey(Uint8List privateKey) async {
-    final hex = privateKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-    await _storage.write(key: 'private_key', value: hex);
+    final codes = Uint8List(privateKey.length * 2);
+    try {
+      for (var i = 0; i < privateKey.length; i++) {
+        final b = privateKey[i];
+        codes[i * 2] = _hexDigits.codeUnitAt(b >> 4);
+        codes[i * 2 + 1] = _hexDigits.codeUnitAt(b & 0x0f);
+      }
+      await _storage.write(key: 'private_key', value: String.fromCharCodes(codes));
+    } finally {
+      zeroise(codes);
+    }
   }
 
   /// Get private key
+  ///
+  /// Decodes by code unit into a pre-sized buffer. The old form called
+  /// `substring` per byte, so reading a 32-byte key left 32 immutable
+  /// two-character strings of key material in the heap, then built a growable
+  /// list that reallocated several times before being copied again.
   Future<Uint8List?> getPrivateKey() async {
     final hex = await _storage.read(key: 'private_key');
     if (hex == null) return null;
-    
-    final bytes = <int>[];
-    for (var i = 0; i < hex.length; i += 2) {
-      bytes.add(int.parse(hex.substring(i, i + 2), radix: 16));
+    if (hex.isEmpty || hex.length.isOdd) {
+      throw FormatException(
+        'Stored private key is not valid hex (${hex.length} characters).',
+      );
     }
-    return Uint8List.fromList(bytes);
+
+    final out = Uint8List(hex.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      final hi = _hexValue(hex.codeUnitAt(i * 2));
+      final lo = _hexValue(hex.codeUnitAt(i * 2 + 1));
+      if (hi < 0 || lo < 0) {
+        zeroise(out);
+        throw const FormatException(
+          'Stored private key contains a non-hex character.',
+        );
+      }
+      out[i] = (hi << 4) | lo;
+    }
+    return out;
   }
 
   /// Overwrite [bytes] with zeros.
