@@ -7,6 +7,41 @@ import 'api.dart';
 import 'api_onchainlabs.dart';
 import 'eip7702_executor.dart';
 
+/// The contract pair a wallet operates against on one chain.
+class OnchainLabsContracts {
+  /// The contract an EIP-7702 authorisation delegates the account to.
+  final String delegate;
+
+  /// The OROCASH token contract.
+  final String token;
+
+  const OnchainLabsContracts({required this.delegate, required this.token});
+}
+
+/// Contract addresses per chain, as release constants.
+///
+/// These are deliberately not fetched at runtime. The delegate address
+/// determines which contract a wallet delegates its account to — the
+/// highest-consequence signature this SDK produces — and `/contracts` is
+/// unauthenticated and unpinned, so whoever answers that request would choose
+/// it. The addresses do not change between deployments, so there is nothing to
+/// gain by asking for them and a great deal to lose.
+///
+/// Verified on-chain on 6 September 2026 via eth_getCode: each address carries
+/// contract code on its own chain and none on the other.
+const Map<int, OnchainLabsContracts> kOnchainLabsContracts = {
+  // Polygon mainnet
+  137: OnchainLabsContracts(
+    delegate: '0x11a2C6C6368376Dd97d2D8Ad45eff904E4186BDD',
+    token: '0x4CD6FFD022F3d777425F1f3BBf4DeD66d3eD1Fad',
+  ),
+  // Polygon Amoy testnet
+  80002: OnchainLabsContracts(
+    delegate: '0xAC5d44B5d38e8E3541D79B005AcC2E8965A2b291',
+    token: '0xcc7fA40292D7CaD12C2033d613ce483C1A89a8A2',
+  ),
+};
+
 /// Thrown when contract addresses cannot be established during
 /// [WalletManager.initialize].
 ///
@@ -41,54 +76,60 @@ class WalletManager {
     required String baseUrl,
     required String rpcUrl,
     int chainId = 80002,
+    String? delegateAddress,
+    String? tokenAddress,
   }) async {
     final storage = const FlutterSecureStorage();
     final api = OnchainLabsApiImpl(baseUrl: baseUrl);
-    
+
     final manager = WalletManager._(storage: storage, api: api);
-    await manager.initialize(rpcUrl: rpcUrl, chainId: chainId);
-    
+    await manager.initialize(
+      rpcUrl: rpcUrl,
+      chainId: chainId,
+      delegateAddress: delegateAddress,
+      tokenAddress: tokenAddress,
+    );
+
     return manager;
   }
 
-  /// Initialize the wallet manager
+  /// Initialise against the release constants for [chainId].
+  ///
+  /// No network call is made. [delegateAddress] and [tokenAddress] override
+  /// the constants, which is how you reach a chain this release does not know
+  /// about or a private deployment. Supplying one requires the other.
   Future<void> initialize({
     required String rpcUrl,
     int chainId = 80002,
+    String? delegateAddress,
+    String? tokenAddress,
   }) async {
-    // The delegate address returned here becomes the contract this wallet
-    // signs an EIP-7702 authorisation to — the highest-consequence signature
-    // the SDK produces. A previous version fell back to hard-coded addresses
-    // when this call failed, which turned an unreachable endpoint into a
-    // silent redirection onto a different contract pair. Fail closed instead:
-    // the caller must be able to tell "not configured" from "configured".
-    final Map<String, dynamic> contractsResult;
-    try {
-      contractsResult = await _api.getContracts();
-    } catch (e) {
-      throw ContractDiscoveryException(
-        'Could not reach the contract configuration endpoint at '
-        '${_api.baseUrl}/contracts: $e',
+    if ((delegateAddress == null) != (tokenAddress == null)) {
+      throw ArgumentError(
+        'delegateAddress and tokenAddress must be supplied together.',
       );
     }
 
-    if (contractsResult['success'] != true) {
-      throw ContractDiscoveryException(
-        'Contract configuration request was rejected: '
-        '${contractsResult['message'] ?? 'no reason given'}',
-      );
+    if (delegateAddress != null) {
+      _delegateAddress = delegateAddress;
+      _orocashAddress = tokenAddress;
+    } else {
+      final known = kOnchainLabsContracts[chainId];
+      if (known == null) {
+        throw ContractDiscoveryException(
+          'No contract addresses are compiled in for chain $chainId. '
+          'Known chains: ${kOnchainLabsContracts.keys.join(', ')}. '
+          'Pass delegateAddress and tokenAddress explicitly to use another.',
+        );
+      }
+      _delegateAddress = known.delegate;
+      _orocashAddress = known.token;
     }
 
-    _delegateAddress = contractsResult['delegation'] ??
-        contractsResult['delegator'] ??
-        contractsResult['delegateAddress'];
-    _orocashAddress = contractsResult['gold'] ?? contractsResult['orocash'];
-
-    if (_delegateAddress == null || _delegateAddress!.isEmpty) {
-      throw ContractDiscoveryException(
-        'Contract configuration contained no delegate address.',
-      );
-    }
+    // Validate whatever we ended up with. An address that is not 20 bytes of
+    // hex would otherwise be discovered deep inside signing.
+    Eip7702Executor.requireAddressHex(_delegateAddress!, 'delegateAddress');
+    Eip7702Executor.requireAddressHex(_orocashAddress!, 'tokenAddress');
 
     final config = Eip7702Config(
       rpcUrl: rpcUrl,
@@ -216,20 +257,32 @@ class WalletManager {
   }
 
   /// Create mainnet wallet manager
-  static Future<WalletManager> createMainnet(String baseUrl) {
+  static Future<WalletManager> createMainnet(
+    String baseUrl, {
+    String? delegateAddress,
+    String? tokenAddress,
+  }) {
     return WalletManager.create(
       baseUrl: baseUrl,
       rpcUrl: 'https://polygon-rpc.com',
       chainId: 137,
+      delegateAddress: delegateAddress,
+      tokenAddress: tokenAddress,
     );
   }
 
   /// Create Amoy testnet wallet manager
-  static Future<WalletManager> createAmoy(String baseUrl) {
+  static Future<WalletManager> createAmoy(
+    String baseUrl, {
+    String? delegateAddress,
+    String? tokenAddress,
+  }) {
     return WalletManager.create(
       baseUrl: baseUrl,
       rpcUrl: 'https://rpc-amoy.polygon.technology',
       chainId: 80002,
+      delegateAddress: delegateAddress,
+      tokenAddress: tokenAddress,
     );
   }
 }

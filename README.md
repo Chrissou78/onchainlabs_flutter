@@ -291,16 +291,37 @@ final walletManager = await WalletManager.createAmoy(baseUrl);
 final walletManager = await WalletManager.createMainnet(baseUrl);
 ```
 
-Contract addresses are fetched from the API during initialisation. If that
-fails, `initialize` throws `ContractDiscoveryException` rather than falling
-back to defaults — the delegate address determines which contract your wallet
-delegates to, so operating on a guess is worse than not operating.
+Contract addresses are **compiled in**, not fetched. `/contracts` is
+unauthenticated and unpinned, and its answer becomes the contract your wallet
+delegates its account to — so whoever answered that request would choose it.
+The addresses don't change, so there is nothing to gain by asking.
+
+| Chain | Delegate | Token |
+|---|---|---|
+| Polygon mainnet (137) | `0x11a2C6C6…6BDD` | `0x4CD6FFD0…1Fad` |
+| Polygon Amoy (80002) | `0xAC5d44B5…b291` | `0xcc7fA402…a8A2` |
+
+Read what a build is pinned to via `kOnchainLabsContracts`. For a private
+deployment or a chain this release doesn't know, pass both explicitly:
+
+```dart
+final walletManager = await WalletManager.create(
+  baseUrl: baseUrl,
+  rpcUrl: rpcUrl,
+  chainId: 1337,
+  delegateAddress: '0x…',
+  tokenAddress: '0x…',
+);
+```
+
+A chain with neither compiled-in constants nor overrides throws
+`ContractDiscoveryException` rather than guessing:
 
 ```dart
 try {
   final walletManager = await WalletManager.createAmoy(baseUrl);
 } on ContractDiscoveryException catch (e) {
-  // Configuration unavailable. Do not proceed.
+  // Unknown chain and no addresses supplied. Do not proceed.
 }
 ```
 

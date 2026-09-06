@@ -182,3 +182,41 @@ First test coverage in the package (D-02): 28 cases across sign-in challenge
 validation and amount parsing, using challenges captured verbatim from the
 live API so a server-side format change fails a test rather than silently
 breaking every login.
+
+
+## 4.4.0
+
+### Security
+- **Contract addresses are now release constants** (T-06, and closes T-11
+  permanently). `WalletManager.initialize` no longer calls `/contracts`. That
+  endpoint is unauthenticated and unpinned, and its response became
+  `config.delegateAddress` — the contract a wallet signs an EIP-7702
+  authorisation to, the highest-consequence signature this SDK produces.
+  Whoever answered the request chose it. The addresses do not change, so
+  there was nothing to gain by asking.
+
+  Pinned per chain in `kOnchainLabsContracts`, verified on-chain on
+  6 September 2026 with `eth_getCode` — each address carries contract code on
+  its own chain and none on the other:
+
+  - Polygon mainnet (137): delegate `0x11a2C6C6…6BDD`, token `0x4CD6FFD0…1Fad`
+  - Polygon Amoy (80002): delegate `0xAC5d44B5…b291`, token `0xcc7fA402…a8A2`
+
+  This also removes the last route to T-11: the v3.2.0 fallback that assigned
+  the gas-paying paymaster EOA to the delegate slot. A regression test asserts
+  that address can never reappear in the table.
+
+### Added
+- `OnchainLabsContracts` and the `kOnchainLabsContracts` map are public, so
+  integrators can read the addresses a build is pinned to.
+- `initialize`, `create`, `createAmoy` and `createMainnet` accept optional
+  `delegateAddress` and `tokenAddress` overrides for a private deployment or a
+  chain this release does not know about. Supplying one requires the other.
+  A chain with neither constants nor overrides throws
+  `ContractDiscoveryException` rather than guessing.
+- Both addresses are validated as 20-byte hex at initialisation, so a
+  malformed one fails immediately instead of deep inside signing.
+
+### Tests
+Seven vectors pinning the address table, including that the two chains never
+share an address and that the T-11 paymaster EOA is absent.
