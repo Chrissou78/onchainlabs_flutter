@@ -84,7 +84,9 @@ class SimpleOnchainApi {
     return {
       'Content-Type': 'application/json',
       'x-api-key': publicKey,
-      'x-message': challenge,
+      // See encodeChallengeForHeader: the raw multi-line SIWE text cannot
+      // travel in an HTTP header.
+      'x-message': encodeChallengeForHeader(challenge),
       'x-signature': signature,
     };
   }

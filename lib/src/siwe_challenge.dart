@@ -1,5 +1,7 @@
 // lib/src/siwe_challenge.dart
 
+import 'dart:convert';
+
 /// Thrown when a server-supplied authentication challenge is not something
 /// this SDK is willing to sign.
 class ChallengeRejected implements Exception {
@@ -8,6 +10,29 @@ class ChallengeRejected implements Exception {
 
   @override
   String toString() => 'ChallengeRejected: $reason';
+}
+
+/// Encode a sign-in challenge for transport in an HTTP header.
+///
+/// An HTTP header value cannot contain CR or LF (RFC 7230 §3.2), and an
+/// EIP-4361 challenge is multi-line by construction — domain, address,
+/// statement, URI, version, chain id, nonce and timestamps each on their own
+/// line. Putting the raw message in `x-message` therefore does not merely risk
+/// a malformed request: `dart:io` rejects it before the request leaves the
+/// process, so every authenticated call throws
+/// `FormatException: Invalid HTTP header field value`.
+///
+/// The API accepts a base64-encoded `x-message` and verifies the signature
+/// against the decoded bytes. Confirmed against ga-api-dev on 7 September 2026:
+/// a base64 challenge authenticates, while a wrong signer, a nonce the server
+/// never issued, and a non-SIWE payload are each still rejected with 401 — so
+/// the server is decoding and verifying, not ignoring the header.
+///
+/// A challenge with no line breaks is returned unchanged, so any deployment
+/// still issuing single-line challenges behaves exactly as before.
+String encodeChallengeForHeader(String message) {
+  if (!message.contains('\n') && !message.contains('\r')) return message;
+  return base64.encode(utf8.encode(message));
 }
 
 /// A parsed EIP-4361 (Sign-In with Ethereum) authentication challenge.

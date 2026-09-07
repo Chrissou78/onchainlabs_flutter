@@ -299,3 +299,43 @@ routed off them so the deprecation produces no warnings inside the package.
   every instance you construct yourself, and plan a migration for data already
   written. K-03 is marked `OWNER Both` in the audit for exactly this reason:
   the SDK supplies the knob, the application decides when to turn it.
+
+
+## 4.7.0
+
+### Fixed — authenticated requests were failing outright since 4.3.0
+- **The sign-in challenge is now base64-encoded in the `x-message` header.**
+
+  An EIP-4361 challenge is multi-line by construction, and an HTTP header value
+  cannot contain CR or LF (RFC 7230 §3.2). `dart:io` enforces this, so putting
+  the raw challenge in `x-message` did not produce a malformed request — it
+  threw `FormatException: Invalid HTTP header field value` before the request
+  left the process. Every call through `createAuthHeaders` was affected:
+  `getWalletStatus`, `getWalletNonce`, `getBalance` and the POST endpoints. The
+  same defect was present in `SimpleOnchainApi._authHeaders`.
+
+  `register` was unaffected, because it already moves `x-message` into the
+  request body.
+
+  This became live when the API adopted EIP-4361; before that the challenge was
+  a single line and the header was valid. `balanceOfPublic` was never affected —
+  it sends only a static `x-api-key`.
+
+  The API already accepts and decodes a base64 `x-message`, so this needs no
+  backend change. Verified against ga-api-dev on 7 September 2026: a base64
+  challenge authenticates on `/nonce`, `/gold/price`, `/platform-status` and
+  `/status`, while a signature from a different wallet, a nonce the server never
+  issued, and a non-SIWE payload are each still rejected with 401 — the server
+  is decoding and verifying, not ignoring the header.
+
+  A challenge containing no line breaks is sent unchanged, so any deployment
+  still issuing single-line challenges is unaffected.
+
+  Reported by GlueGlue with reproduction and independent verification against
+  both `package:http` and `dio`.
+
+### Added
+- `encodeChallengeForHeader`, exported, for callers building their own headers.
+- Four regression tests covering the encoding, the round-trip to the exact
+  bytes the signature covers, single-line pass-through, and that the output is
+  a valid HTTP header value.

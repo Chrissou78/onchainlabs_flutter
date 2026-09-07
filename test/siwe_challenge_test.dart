@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:onchainlabs_flutter/onchainlabs_flutter.dart';
 
@@ -23,6 +25,8 @@ const _address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
 final _duringWindow = DateTime.utc(2026, 9, 5, 19, 0, 0);
 
 void main() {
+  _headerEncodingTests();
+
   group('parse', () {
     test('accepts the real server challenge and reads every field', () {
       final c = SiweChallenge.parse(_devChallenge);
@@ -177,6 +181,37 @@ void main() {
         ),
         returnsNormally,
       );
+    });
+  });
+}
+
+/// The transport bug: an EIP-4361 challenge is multi-line, and dart:io rejects
+/// a header value containing CR/LF before the request is sent. Every
+/// authenticated call in 4.3.0–4.6.0 therefore threw FormatException.
+void _headerEncodingTests() {
+  group('encodeChallengeForHeader', () {
+    test('a real multi-line challenge becomes header-safe', () {
+      final encoded = encodeChallengeForHeader(_devChallenge);
+      expect(encoded, isNot(contains('\n')));
+      expect(encoded, isNot(contains('\r')));
+    });
+
+    test('round-trips to the exact bytes the signature covers', () {
+      final encoded = encodeChallengeForHeader(_devChallenge);
+      expect(utf8.decode(base64.decode(encoded)), _devChallenge);
+    });
+
+    test('a single-line challenge is passed through untouched', () {
+      const plain = 'some-opaque-single-line-challenge';
+      expect(encodeChallengeForHeader(plain), plain);
+    });
+
+    test('output is valid in an HTTP header value', () {
+      // RFC 7230: visible ASCII, plus space and horizontal tab. Base64 output
+      // is a strict subset, so this holds by construction — assert it anyway,
+      // because this is the property the whole fix rests on.
+      final encoded = encodeChallengeForHeader(_devChallenge);
+      expect(RegExp(r'^[\x21-\x7E]+$').hasMatch(encoded), isTrue);
     });
   });
 }

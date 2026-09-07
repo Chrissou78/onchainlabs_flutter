@@ -502,7 +502,9 @@ class Eip7702Executor {
 
     // Cache the headers
     _cachedAuthHeaders = {
-      'x-message': signMessageStr,
+      // Base64 because an EIP-4361 challenge is multi-line and a header
+      // value cannot contain CR/LF. See encodeChallengeForHeader.
+      'x-message': encodeChallengeForHeader(signMessageStr),
       'x-signature': signature,
       'x-address': address,
     };
