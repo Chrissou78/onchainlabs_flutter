@@ -5,7 +5,7 @@ Polygon EVM wallet helper for Flutter mobile apps.
 - create a Polygon-compatible wallet (address + private key + mnemonic)
 - authenticate against the OnchainLabs API with a signed sign-in challenge
 - read and move OROCASH tokens, including gasless transfers via EIP-7702
-- read gold prices, contract state, fees, limits, roles and NFT membership
+- read contract state, fees, limits, roles and NFT membership
 
 The wallet is an ordinary Ethereum wallet, so the address works on Polygon.
 
@@ -40,7 +40,7 @@ covers every client in your app.
 
 ```yaml
 dependencies:
-  onchainlabs_flutter: ^4.3.0
+  onchainlabs_flutter: ^5.0.0
 ```
 
 ```dart
@@ -162,12 +162,12 @@ Future<void> restoreFromPrivateKey(
 }
 ```
 
-### 4. Register and whitelist
+### 4. Register the wallet
 
 ```dart
-Future<void> register(WalletManager walletManager, String apiKey) async {
+Future<void> register(WalletManager walletManager) async {
   final result = await walletManager.withPrivateKey(
-    (key) => walletManager.executor.registerAndWhitelist(key, apiKey),
+    (key) => walletManager.executor.registerWallet(key),
   );
 
   if (!result.success) {
@@ -176,8 +176,10 @@ Future<void> register(WalletManager walletManager, String apiKey) async {
 }
 ```
 
-> `registerAndWhitelist` takes a privileged API key. See
-> [Admin operations](#admin-operations) before shipping it in an app.
+Registration authenticates with the wallet's own signature and needs no API
+key beyond the public one. Whitelisting is a privileged operation and belongs
+behind an authenticated backend endpoint — see
+[Removed in 5.0.0](#removed-in-500).
 
 ---
 
@@ -232,8 +234,8 @@ If you know the precision without an initialised executor:
 final raw = Eip7702Executor.parseAmountWithDecimals('100.5', 6);
 ```
 
-> **Deprecated:** `toRawAmount(double)` is deprecated and will be removed in
-> 5.0.0. Binary floating point cannot represent most decimal fractions exactly,
+> **Deprecated:** `toRawAmount(double)` is deprecated and will be removed in a
+> future major. Binary floating point cannot represent most decimal fractions exactly,
 > and above roughly 9×10¹⁵ base units it cannot represent the value at all.
 > `toHumanAmount` returns a `double` and is for display only — never feed its
 > result back into a transaction.
@@ -457,43 +459,7 @@ for (final entry in roles.entries) {
 | 1 | Moderator | 4 | CFO |
 | 2 | Minter | 5 | Whitelist |
 
-### 14. Gold price — deprecated
-
-> **Deprecated in 4.5.0, removed in 5.0.0.** This path has no known consumer,
-> and it returns **USD per milligram** — not directly usable by a product
-> priced in euros, since the SDK supplies no FX rate. If you price a
-> value-bearing action, take a server-issued quote carrying a signature you
-> verify, rather than having a client read a bare number off an endpoint.
-> `getBalanceWithUsdValue` is deprecated with it.
-
-One OROCASH represents 1mg of gold.
-
-```dart
-final priceResult = await executor.getGoldPrice(key);
-
-if (priceResult.success) {
-  final price = priceResult.price!;
-  print('Per mg:   ${price.formattedPricePerMg}');
-  print('Per gram: ${price.formattedPricePerGram}');
-}
-```
-
-Quotes are validated before use: a price must be finite, positive, inside
-`goldPriceMinUsdPerMg`/`goldPriceMaxUsdPerMg`, and within
-`goldPriceMaxRelativeMove` of the last accepted price. Otherwise the SDK
-refuses to price rather than pricing wrongly. Tune the bands for your own risk
-appetite:
-
-```dart
-executor.goldPriceMinUsdPerMg = 0.005;
-executor.goldPriceMaxUsdPerMg = 1.0;
-executor.goldPriceMaxRelativeMove = 0.5; // or null to disable
-```
-
-These are a sanity check, not a market-data control. Without certificate
-pinning, an interception still sets the price a user sees within those bands.
-
-### 15. NFT membership
+### 14. NFT membership
 
 ```dart
 final check = await executor.checkMembership(key, address);
@@ -510,13 +476,13 @@ Prefer `checkMembership` over `hasMembership` anywhere the answer gates
 access: `hasMembership` returns `false` both for "no membership" and for
 "the check failed".
 
-### 16. Everything at once
+### 15. Everything at once
 
 ```dart
 final allInfo = await executor.getAllContractInfo(key);
 ```
 
-### 17. Wallet status
+### 16. Wallet status
 
 ```dart
 final result = await executor.getWalletStatus(key);
@@ -526,7 +492,7 @@ if (result.success) {
   print('Whitelisted: ${data['whitelisted']}');
   print('Delegated: ${data['delegated']}');
 } else if (result.error?.contains('Wallet not found') == true) {
-  print('Not registered — call registerAndWhitelist first');
+  print('Not registered — call registerWallet first');
 }
 ```
 
@@ -616,42 +582,35 @@ if (result['transportError'] == true) {
 
 ---
 
-## Admin operations
+## Removed in 5.0.0
 
-`adminMint`, `adminWhitelist` and `registerAndWhitelist` take a privileged API
-key.
+5.0.0 removes two surfaces. Both were unused by every known integrator.
 
-> **Do not ship an admin key in a mobile app.** Anything in the binary is
-> extractable, and rotating a leaked key does not help when the replacement
-> ships the same way. Have your backend perform privileged operations in
-> response to an authenticated user action instead.
->
-> This surface is scheduled for removal in 5.0.0.
-
-```dart
-final result = await walletManager.executor.adminMint(
-  secretApiKey,
-  '0xRecipientAddress',
-  '1000',
-);
-```
-
----
-
-## Migrating from 3.x
-
-| Change | Action |
+| Removed | Replace with |
 |---|---|
-| API hostnames changed | `ga-api` → `api-ga`, `dev-ga-api` → `ga-api-dev` |
-| SDK no longer prints anything | Set `OnchainLabsLog.handler` if you relied on its output |
-| `PolygonWallet.toString()` returns the address only | Read fields directly if you need them |
-| Contract discovery fails closed | Handle `ContractDiscoveryException` |
-| Challenges are validated | Handle `ChallengeRejected` |
-| `toRawAmount(double)` deprecated | Use `parseAmount(String)` |
-| Nonce fetch failures abort | Signing no longer proceeds at nonce 0 |
-| Addresses are validated | Malformed addresses now throw instead of encoding wrongly |
+| `adminMint`, `adminWhitelist` | A backend endpoint. No key that confers minting or whitelisting authority can live safely in a mobile client. |
+| `registerAndWhitelist(key, secretApiKey)` | `registerWallet(key)`, then have your backend whitelist in response to an authenticated user action |
+| `getGoldPrice`, `getBalanceWithUsdValue` | A server-issued quote carrying a signature you verify |
+| `GoldPrice`, `GoldPriceResult`, the `goldPrice*` tuning fields | — |
+| `calculateTokenUsdValue`, `calculateTokenUsdValueFromRaw`, `formatUsdValue` | — |
+| `getAllContractInfo` no longer returns `goldPrice` or `balanceUsdValue` | — |
 
-No public signature was removed in 4.x. Deprecated members still work.
+`OnchainLabsApi` loses `adminMint`, `adminWhitelist` and `getGoldPrice`. If you
+implement that interface yourself, delete those three methods.
+
+Nothing else changed. Everything carried over from 4.x keeps its signature.
+
+### Why
+
+The SDK no longer has any method that requires a secret API key. That is the
+point of the change: an embedded key is public by construction, so the fix is
+not to hide it better but to remove the reason for a client to hold one at all.
+Registration and authentication use the wallet's own signature and the public
+key, which is an identifier rather than a credential.
+
+The gold-price path went because it had no consumer — the application takes a
+EUR-per-gram price from its own backend, and a USD-per-milligram figure is not
+usable by a product priced in euros without an FX rate the SDK does not supply.
 
 ---
 
@@ -672,7 +631,6 @@ Carried from the 2026 security review; scheduled for 5.0.0.
   the bytes that get signed.
 - **Secure storage uses platform defaults** — not hardware-backed, no
   user-presence requirement, not excluded from OS backups.
-- **The admin surface exists on the client.** See above.
 
 ---
 

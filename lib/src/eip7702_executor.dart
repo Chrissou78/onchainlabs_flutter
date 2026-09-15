@@ -192,52 +192,7 @@ class MembershipCheck {
   bool get isKnown => error == null;
 }
 
-/// Gold price data
-class GoldPrice {
-  final double pricePerMg;
-  final DateTime fetchedAt;
-  
-  const GoldPrice({
-    required this.pricePerMg,
-    required this.fetchedAt,
-  });
-  
-  /// Price per gram (1000 mg)
-  double get pricePerGram => pricePerMg * 1000;
-  
-  /// Price per troy ounce (31.1035 grams)
-  double get pricePerOunce => pricePerGram * 31.1035;
-  
-  /// Format price per mg
-  String get formattedPricePerMg => '\$${pricePerMg.toStringAsFixed(6)}';
-  
-  /// Format price per gram
-  String get formattedPricePerGram => '\$${pricePerGram.toStringAsFixed(2)}';
-  
-  /// Format price per ounce
-  String get formattedPricePerOunce => '\$${pricePerOunce.toStringAsFixed(2)}';
-}
 
-/// Result of gold price fetch
-class GoldPriceResult {
-  final bool success;
-  final GoldPrice? price;
-  final String? error;
-  
-  const GoldPriceResult._({
-    required this.success,
-    this.price,
-    this.error,
-  });
-  
-  factory GoldPriceResult.success(GoldPrice price) {
-    return GoldPriceResult._(success: true, price: price);
-  }
-  
-  factory GoldPriceResult.failure(String error) {
-    return GoldPriceResult._(success: false, error: error);
-  }
-}
 
 /// EIP-7702 Executor for gasless transactions
 class Eip7702Executor {
@@ -256,13 +211,9 @@ class Eip7702Executor {
   bool _isInitialized = false;
   
   // Cached gold price
-  GoldPrice? _cachedGoldPrice;
-  DateTime? _goldPriceCacheExpiry;
-  static const _goldPriceCacheDuration = Duration(minutes: 5);
 
   /// Last price that passed validation, retained across cache expiry so a
   /// newly quoted price can be sanity-checked against it.
-  GoldPrice? _lastGoodGoldPrice;
 
   /// Domain the `/random` sign-in challenge must declare, or null to skip the
   /// check (the default).
@@ -280,13 +231,10 @@ class Eip7702Executor {
   /// Deliberately wide — this rejects a corrupted, zeroed or wildly
   /// manipulated quote, not ordinary market movement. Widen or narrow it for
   /// your own risk appetite; it is not a market-data control.
-  double goldPriceMinUsdPerMg = 0.005;
-  double goldPriceMaxUsdPerMg = 1.0;
 
   /// Largest tolerated move from the last validated price, as a fraction.
   /// 0.5 means a new quote may not differ from the last good one by more than
   /// 50%. Set to null to disable the relative check.
-  double? goldPriceMaxRelativeMove = 0.5;
 
   Eip7702Executor({
     required this.config,
@@ -628,59 +576,7 @@ class Eip7702Executor {
     }
   }
 
-  /// Admin whitelist an address
-  Future<Eip7702Result> adminWhitelist(
-    Uint8List privateKeyBytes,
-    String secretApiKey,
-    String walletAddress,
-  ) async {
-    try {
-      
-      // Create auth headers with signature
-      final authHeaders = await createAuthHeaders(privateKeyBytes);
-      
-      // Add API key to headers
-      final headers = {
-        ...authHeaders,
-        'x-api-key': secretApiKey,
-      };
-      
-      
-      final result = await _api.adminWhitelist(walletAddress, headers);
-      
-      
-      if (result['success'] == true) {
-        return Eip7702Result.success(data: result);
-      } else {
-        return Eip7702Result.failure(result['message'] ?? 'Failed to whitelist wallet');
-      }
-    } catch (e) {
-      return Eip7702Result.failure('Admin whitelist failed: $e');
-    }
-  }
 
-  /// Register and whitelist in one call
-  Future<Eip7702Result> registerAndWhitelist(Uint8List privateKeyBytes, String secretApiKey) async {
-    
-    final registerResult = await registerWallet(privateKeyBytes);
-    
-    
-    // Check if we should continue to whitelist
-    final shouldContinue = registerResult.success || 
-        (registerResult.error?.toLowerCase().contains('already') == true) ||
-        (registerResult.data?['message']?.toString().toLowerCase().contains('already') == true);
-    
-    
-    if (!shouldContinue) {
-      return registerResult;
-    }
-    
-    final address = getAddressFromPrivateKey(privateKeyBytes);
-    
-    final whitelistResult = await adminWhitelist(privateKeyBytes, secretApiKey, address);
-    
-    return whitelistResult;
-  }
   
   /// Authorize wallet for EIP-7702
   Future<Eip7702Result> authorize(Uint8List privateKeyBytes, {bool waitForTx = false}) async {
@@ -1003,235 +899,17 @@ class Eip7702Executor {
   // ============================================
 
   /// Fetch gold price (price of 1mg of gold in USD = price of 1 OROCASH token)
-  /// Fetch the OnchainLabs gold price.
-  ///
-  /// This is the price of 1mg of gold in **USD**. The Gens Aurea application
-  /// does not use it — it takes a EUR-per-gram price from its own backend —
-  /// so this path has no consumer, and a USD/mg figure is not directly usable
-  /// by a product priced in euros without an FX rate the SDK does not supply.
-  ///
-  /// Deprecated in 4.5.0 and scheduled for removal in 5.0.0, together with
-  /// [GoldPrice], [GoldPriceResult], [getBalanceWithUsdValue] and the
-  /// `goldPrice*` tuning fields. If you price value-bearing actions, take a
-  /// server-issued quote with a signature you verify, rather than a client
-  /// reading a bare number.
-  @Deprecated(
-    'Unused by any known integrator and USD-denominated. Take a signed '
-    'server-issued quote instead. Removed in 5.0.0.',
-  )
-  Future<GoldPriceResult> getGoldPrice(
-    Uint8List privateKeyBytes, {
-    bool forceRefresh = false,
-  }) =>
-      _goldPrice(privateKeyBytes, forceRefresh: forceRefresh);
 
-  Future<GoldPriceResult> _goldPrice(Uint8List privateKeyBytes, {bool forceRefresh = false}) async {
-    try {
-      // Check cache first
-      if (!forceRefresh && _isGoldPriceCacheValid()) {
-        return GoldPriceResult.success(_cachedGoldPrice!);
-      }
-      
-      
-      final headers = await createAuthHeaders(privateKeyBytes);
-      final result = await _api.getGoldPrice(headers);
-      
-      if (result['success'] == true) {
-        final price = _extractGoldPrice(result);
 
-        // This price converts balances into displayed fiat value and underpins
-        // purchase and redemption decisions, so refuse to price rather than
-        // price wrongly. Refusing degrades the UI; accepting a manipulated
-        // rate can induce a sale at a fraction of true value.
-        final rejection = _rejectImplausiblePrice(price);
-        if (rejection != null) return GoldPriceResult.failure(rejection);
 
-        final goldPrice = GoldPrice(
-          pricePerMg: price,
-          fetchedAt: DateTime.now(),
-        );
 
-        // Cache the result
-        _cachedGoldPrice = goldPrice;
-        _goldPriceCacheExpiry = DateTime.now().add(_goldPriceCacheDuration);
-        _lastGoodGoldPrice = goldPrice;
 
-        return GoldPriceResult.success(goldPrice);
-      } else {
-        return GoldPriceResult.failure(result['message'] ?? 'Failed to fetch gold price');
-      }
-    } catch (e) {
-      return GoldPriceResult.failure('Failed to fetch gold price: $e');
-    }
-  }
-  /// Check if gold price cache is valid
-  bool _isGoldPriceCacheValid() {
-    if (_cachedGoldPrice == null || _goldPriceCacheExpiry == null) return false;
-    return DateTime.now().isBefore(_goldPriceCacheExpiry!);
-  }
 
-  /// Clear gold price cache
-  void clearGoldPriceCache() {
-    _cachedGoldPrice = null;
-    _goldPriceCacheExpiry = null;
-  }
-
-  /// Get cached gold price (returns null if not cached or expired)
-  GoldPrice? get cachedGoldPrice {
-    if (_isGoldPriceCacheValid()) {
-      return _cachedGoldPrice;
-    }
-    return null;
-  }
-
-  /// Coerce one candidate field into a price, or throw.
-  ///
-  /// A malformed numeric string used to fall through to `?? 0.0`, so a
-  /// corrupted or truncated response was read as a valid price of zero. A
-  /// present-but-unreadable field is an error, not a zero.
-  static double _coercePrice(Object? value, String path) {
-    if (value is num) return value.toDouble();
-    if (value is String) {
-      final parsed = double.tryParse(value);
-      if (parsed == null) {
-        throw FormatException('gold price at "$path" is not numeric');
-      }
-      return parsed;
-    }
-    throw FormatException(
-      'gold price at "$path" had unexpected type ${value.runtimeType}',
-    );
-  }
-
-  /// Extract price from an API response.
-  ///
-  /// Accepts exactly the documented shapes below, in this order, and rejects
-  /// anything else. It does not hunt the payload for the first number it can
-  /// find: a permissive search lets a malformed or partial response be read as
-  /// a valid price.
-  double _extractGoldPrice(Map<String, dynamic> data) {
-    if (data.containsKey('price')) {
-      return _coercePrice(data['price'], 'price');
-    }
-
-    final result = data['result'];
-    if (result is num || result is String) {
-      return _coercePrice(result, 'result');
-    }
-    if (result is Map) {
-      if (result.containsKey('price')) {
-        return _coercePrice(result['price'], 'result.price');
-      }
-      if (result.containsKey('pricePerMg')) {
-        return _coercePrice(result['pricePerMg'], 'result.pricePerMg');
-      }
-    }
-
-    final nested = data['data'];
-    if (nested is Map && nested.containsKey('price')) {
-      return _coercePrice(nested['price'], 'data.price');
-    }
-
-    throw const FormatException(
-      'gold price response matched none of the expected shapes '
-      '(price | result | result.price | result.pricePerMg | data.price)',
-    );
-  }
-
-  /// Returns a rejection reason for [price], or null if it is acceptable.
-  String? _rejectImplausiblePrice(double price) {
-    if (!price.isFinite) {
-      return 'Quoted gold price was not a finite number.';
-    }
-    if (price <= 0) {
-      return 'Quoted gold price was not positive ($price USD/mg).';
-    }
-    if (price < goldPriceMinUsdPerMg || price > goldPriceMaxUsdPerMg) {
-      return 'Quoted gold price $price USD/mg is outside the plausible band '
-          '[$goldPriceMinUsdPerMg, $goldPriceMaxUsdPerMg].';
-    }
-
-    final last = _lastGoodGoldPrice;
-    final maxMove = goldPriceMaxRelativeMove;
-    if (last != null && maxMove != null && last.pricePerMg > 0) {
-      final move = (price - last.pricePerMg).abs() / last.pricePerMg;
-      if (move > maxMove) {
-        return 'Quoted gold price $price USD/mg moved '
-            '${(move * 100).toStringAsFixed(1)}% from the last validated price '
-            '${last.pricePerMg} USD/mg, beyond the '
-            '${(maxMove * 100).toStringAsFixed(0)}% tolerance.';
-      }
-    }
-
-    return null;
-  }
-
-  /// Calculate USD value from token balance string
-  double calculateTokenUsdValue(String balance, double pricePerMg) {
-    final balanceNum = double.tryParse(balance.replaceAll(',', '')) ?? 0.0;
-    return balanceNum * pricePerMg;
-  }
-
-  /// Calculate USD value from raw BigInt balance
-  double calculateTokenUsdValueFromRaw(BigInt balance, double pricePerMg) {
-    final humanBalance = toHumanAmount(balance);
-    return humanBalance * pricePerMg;
-  }
-
-  /// Format USD value for display
-  String formatUsdValue(double value) {
-    if (value >= 1000000) {
-      return '\$${(value / 1000000).toStringAsFixed(2)}M';
-    } else if (value >= 1000) {
-      final formatted = value.toStringAsFixed(2);
-      final parts = formatted.split('.');
-      final intPart = parts[0].replaceAllMapped(
-        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-        (Match m) => '${m[1]},',
-      );
-      return '\$$intPart.${parts[1]}';
-    }
-    return '\$${value.toStringAsFixed(2)}';
-  }
 
   /// Get balance with USD value (convenience method)
   @Deprecated(
     'Depends on the deprecated gold-price path. Removed in 5.0.0.',
   )
-  Future<Map<String, dynamic>> getBalanceWithUsdValue(
-    Uint8List privateKeyBytes,
-    String address,
-    String apiKey,
-  ) async {
-    try {
-      final balance = await getOroCashBalanceFormattedWithApiKey(address, apiKey);
-      final priceResult = await _goldPrice(privateKeyBytes);
-      
-      if (priceResult.success && priceResult.price != null) {
-        final usdValue = calculateTokenUsdValue(balance, priceResult.price!.pricePerMg);
-        return {
-          'success': true,
-          'balance': balance,
-          'usdValue': usdValue,
-          'formattedUsdValue': formatUsdValue(usdValue),
-          'goldPrice': priceResult.price,
-        };
-      }
-      
-      return {
-        'success': true,
-        'balance': balance,
-        'usdValue': null,
-        'formattedUsdValue': null,
-        'goldPrice': null,
-      };
-    } catch (e) {
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
-    }
-  }
 
   // ============================================
   // CONTRACT READ METHODS (via API)
@@ -1629,21 +1307,6 @@ class Eip7702Executor {
     // Roles
     try { results['roles'] = await getUserRoles(privateKeyBytes, address); } catch (e) { results['roles'] = <int, bool>{}; }
     
-    // Gold price
-    try {
-      final goldPriceResult = await _goldPrice(privateKeyBytes);
-      if (goldPriceResult.success && goldPriceResult.price != null) {
-        results['goldPrice'] = goldPriceResult.price;
-        final balance = results['balance'] as BigInt?;
-        if (balance != null) {
-          results['balanceUsdValue'] = calculateTokenUsdValueFromRaw(balance, goldPriceResult.price!.pricePerMg);
-        }
-      }
-    } catch (e) {
-      results['goldPrice'] = null;
-      results['balanceUsdValue'] = null;
-    }
-
     // NFT Membership
     try { 
       final membershipInfo = await getWalletMembershipInfo(privateKeyBytes);
@@ -1940,25 +1603,6 @@ class Eip7702Executor {
     return formatAmount(allowance);
   }
 
-  /// Admin mint tokens
-  Future<Eip7702Result> adminMint(String secretApiKey, String toAddress, String amount) async {
-    try {
-      
-      final headers = {
-        'x-api-key': secretApiKey,
-      };
-      
-      final result = await _api.adminMint(toAddress, amount, headers);
-      
-      if (result['success'] == true) {
-        return Eip7702Result.success(data: result);
-      } else {
-        return Eip7702Result.failure(result['message'] ?? 'Mint failed');
-      }
-    } catch (e) {
-      return Eip7702Result.failure('Admin mint failed: $e');
-    }
-  }
 
   // ============================================
   // SOULBOUND NFT READ METHODS (Public)

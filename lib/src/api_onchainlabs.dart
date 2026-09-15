@@ -237,56 +237,7 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
     }
   }
   
-  @override
-  Future<Map<String, dynamic>> adminMint(
-      String toAddress, String amount, Map<String, String> headers) async {
-    try {
-      final url = '$baseUrl/admin/mint';
-      
-      final requestBody = {
-        'address': toAddress,
-        'amount': amount,
-      };
-      
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
-        body: json.encode(requestBody),
-      );
-      
-      return _parseResponse(response);
-    } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
-    }
-  }
 
-  @override
-  Future<Map<String, dynamic>> adminWhitelist(
-      String walletAddress, Map<String, String> headers) async {
-    try {
-      final url = '$baseUrl/admin/whitelist';
-      
-      final requestBody = {
-        'address': walletAddress,
-      };
-      
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
-        body: json.encode(requestBody),
-      );
-      
-      return _parseResponse(response);
-    } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
-    }
-  }
 
   @override
   Future<Map<String, dynamic>> getContracts() async {
@@ -303,31 +254,4 @@ class OnchainLabsApiImpl implements OnchainLabsApi {
     }
   }
 
-  @override
-    Future<Map<String, dynamic>> getGoldPrice(Map<String, String> headers) async {
-    try {
-      final url = '$baseUrl/gold/price';
-      
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {...headers, 'Content-Type': 'application/json'},
-      );
-      final result = _parseResponse(response);
-      
-      
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          ...result,
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Failed to fetch gold price: ${response.statusCode}',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'message': 'Network error: $e'};
-    }
-  }
 }

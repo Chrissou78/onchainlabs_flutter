@@ -339,3 +339,50 @@ routed off them so the deprecation produces no warnings inside the package.
 - Four regression tests covering the encoding, the round-trip to the exact
   bytes the signature covers, single-line pass-through, and that the output is
   a valid HTTP header value.
+
+
+## 5.0.0
+
+Breaking. Two surfaces are removed, both unused by every known integrator.
+
+### Removed — the secret-API-key surface (B-04, and the basis of T-03)
+- `Eip7702Executor.adminMint`, `adminWhitelist` and `registerAndWhitelist`
+- `OnchainLabsApi.adminMint` and `adminWhitelist`, and their implementations
+
+  **No method in the SDK now requires a secret API key.** That is the point of
+  the change. An embedded key is public by construction — moving it out of
+  source into a build-time variable does not change what ships in the binary —
+  so the fix is to remove the reason a client would hold one at all, not to
+  hide it better.
+
+  Registration keeps working: `registerWallet(key)` authenticates with the
+  wallet's own signature and the public key, which is an identifier rather than
+  a credential. Whitelisting belongs behind an authenticated backend endpoint,
+  performed in response to a user action, which is what the Gens Aurea
+  application already does.
+
+  Migration: replace `registerAndWhitelist(key, secretApiKey)` with
+  `registerWallet(key)` and have your backend whitelist.
+
+### Removed — the gold-price surface (B-06)
+- `getGoldPrice`, `getBalanceWithUsdValue`, `clearGoldPriceCache`,
+  `cachedGoldPrice`
+- `calculateTokenUsdValue`, `calculateTokenUsdValueFromRaw`, `formatUsdValue`
+- `GoldPrice`, `GoldPriceResult`, and the `goldPriceMinUsdPerMg` /
+  `goldPriceMaxUsdPerMg` / `goldPriceMaxRelativeMove` tuning fields
+- `OnchainLabsApi.getGoldPrice` and its implementation
+- `getAllContractInfo` no longer returns `goldPrice` or `balanceUsdValue`
+
+  Deprecated in 4.5.0, removed here. It had no consumer: the application takes
+  a EUR-per-gram price from its own backend, and a USD-per-milligram figure is
+  not usable by a product priced in euros without an FX rate the SDK does not
+  supply. For anything value-bearing, take a server-issued quote carrying a
+  signature the client verifies.
+
+### Unchanged
+Everything else keeps its signature. Wallet creation, storage, authentication,
+`registerWallet`, `getWalletStatus`, balances, transfers, contract reads and
+`balanceOfPublic` are untouched.
+
+`toRawAmount(double)` remains deprecated rather than removed, to keep this
+release to the two surfaces above; it will go in a later major.

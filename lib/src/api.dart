@@ -40,22 +40,9 @@ abstract class OnchainLabsApi {
     List<dynamic>? params,
   });
   
-  /// Admin mint tokens
-  Future<Map<String, dynamic>> adminMint(
-    String toAddress,
-    String amount,
-    Map<String, String> headers,
-  );
   
-  /// Admin whitelist wallet
-  Future<Map<String, dynamic>> adminWhitelist(
-    String walletAddress,
-    Map<String, String> headers,
-  );
   
   /// Get contract addresses
   Future<Map<String, dynamic>> getContracts();
   
-  /// Get gold price (price of 1mg of gold in USD = price of 1 OROCASH token)
-  Future<Map<String, dynamic>> getGoldPrice(Map<String, String> headers);
 }
